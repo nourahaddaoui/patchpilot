@@ -8,7 +8,7 @@ A vulnerability remediation agent that scans a Python repo with Trivy, bumps a v
 make setup
 ```
 
-Creates `.venv`, installs the Python dependencies, checks that Trivy is installed and downloads its vulnerability DB into `.cache/trivy` so scans are reproducible.
+Creates `.venv` (the agent) and `sandbox/.venv` (the interpreter the target repo's tests run in), installs the Python dependencies, checks that Trivy is installed and downloads its vulnerability DB into `.cache/trivy` so scans are reproducible.
 
 ## Run
 
@@ -22,6 +22,14 @@ make run
 make test
 ```
 
+Call one tool by hand (logged to `logs/<run_id>.jsonl`):
+
+```bash
+.venv/bin/python -m agent.tools read_file '{"path": "requirements.txt"}'
+.venv/bin/python -m agent.tools run_scan '{}'
+.venv/bin/python -m agent.tools run_tests '{}'
+```
+
 ## Layout
 
 | Path | What it is | Day |
@@ -30,7 +38,9 @@ make test
 | `sandbox/template/` | Target repo template (5 files, 3 tests, pinned vulnerable dependency) | 1 |
 | `scripts/setup_trivy.sh` | Trivy check + DB cache download | 1 |
 | `docs/proposal.md` | One-paragraph proposal sent to the instructor | 1 |
-| `agent/tools/` | `run_scan`, `read_file`, `run_tests`, `edit_file` | 2–3 |
+| `agent/tools/` | `run_scan`, `read_file`, `run_tests` (strict schemas, plain-text errors), `edit_file` | 2–3 |
+| `agent/tools/registry.py` | `call_tool()`: validate, run, turn failures into plain text, log | 2 |
+| `agent/calllog.py` | JSONL call log: input, output, ok, duration per call | 2 |
 | `sandbox/reset.sh` | Resets the sandbox clone | 3 |
 | `agent/loop.py` | ReAct loop wired to the stop rule | 4 |
 | `agent/checkpoint.py` | Human approval of the diff | 5 |

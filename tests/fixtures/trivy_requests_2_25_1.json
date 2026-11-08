@@ -1,0 +1,38 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "sandbox/template",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "requirements.txt",
+      "Class": "lang-pkgs",
+      "Type": "pip",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2024-47081",
+          "PkgName": "requests",
+          "InstalledVersion": "2.25.1",
+          "FixedVersion": "2.32.4",
+          "Severity": "MEDIUM",
+          "Title": "requests: .netrc credentials leak via malicious URLs"
+        },
+        {
+          "VulnerabilityID": "CVE-2023-32681",
+          "PkgName": "requests",
+          "InstalledVersion": "2.25.1",
+          "FixedVersion": "2.31.0",
+          "Severity": "MEDIUM",
+          "Title": "python-requests: Unintended leak of Proxy-Authorization header"
+        },
+        {
+          "VulnerabilityID": "CVE-2024-35195",
+          "PkgName": "requests",
+          "InstalledVersion": "2.25.1",
+          "FixedVersion": "2.32.0",
+          "Severity": "MEDIUM",
+          "Title": "requests: subsequent requests to the same host ignore cert verification"
+        }
+      ]
+    }
+  ]
+}

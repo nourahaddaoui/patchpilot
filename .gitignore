@@ -5,4 +5,5 @@ __pycache__/
 .cache/
 logs/*.jsonl
 sandbox/work/
+sandbox/.venv/
 .env
