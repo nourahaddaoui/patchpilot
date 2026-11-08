@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -13,10 +13,15 @@ _VENV_BIN = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
 SANDBOX_PYTHON = PROJECT_ROOT / "sandbox" / ".venv" / _VENV_BIN[0] / _VENV_BIN[1]
 
 
+def default_trivy_cache() -> Path:
+    """$PATCHPILOT_TRIVY_CACHE if set (e.g. a cache on another disk), else .cache/trivy."""
+    return Path(os.environ.get("PATCHPILOT_TRIVY_CACHE") or PROJECT_ROOT / ".cache" / "trivy")
+
+
 @dataclass
 class ToolContext:
     repo_root: Path
-    trivy_cache: Path = PROJECT_ROOT / ".cache" / "trivy"
+    trivy_cache: Path = field(default_factory=default_trivy_cache)
     test_python: str = str(SANDBOX_PYTHON)
     scan_timeout_s: int = 120
     test_timeout_s: int = 120

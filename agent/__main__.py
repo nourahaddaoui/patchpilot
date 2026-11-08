@@ -13,7 +13,7 @@ import sys
 from agent import sandbox
 from agent.calllog import CallLogger
 from agent.loop import run
-from agent.model import OpenAIModel
+from agent.model import OpenAIModel, load_dotenv
 from agent.stop_rule import Limits
 from agent.tools.context import ToolContext
 
@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-reset", action="store_true", help="do not rebuild sandbox/work first")
     parser.add_argument("--model", default=None, help="OpenAI model (default: $PATCHPILOT_MODEL or gpt-4o-mini)")
     ns = parser.parse_args(argv)
+    load_dotenv()
 
     if not ns.no_reset and ns.repo == str(sandbox.WORK):
         sandbox.reset()

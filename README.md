@@ -25,6 +25,8 @@ The model is OpenAI `gpt-4o-mini` by default (`PATCHPILOT_MODEL` or `--model` to
 
 On Windows use `.venv\Scripts\python -m agent` and `.venv\Scripts\python -m pytest` in place of the `make` targets.
 
+The Trivy DB is about 1.6 GB unpacked. To keep it somewhere other than `.cache/trivy` (e.g. another disk), download it with `bash scripts/setup_trivy.sh D:/patchpilot-cache/trivy` and set `PATCHPILOT_TRIVY_CACHE` to that path in `.env`.
+
 ## Test
 
 ```bash
