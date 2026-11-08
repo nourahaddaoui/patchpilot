@@ -1,0 +1,9 @@
+[project]
+name = "patchpilot"
+version = "0.1.0"
+description = "A vulnerability remediation agent: scan, fix a dependency pin, test, commit after human approval."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
