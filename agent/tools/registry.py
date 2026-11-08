@@ -14,7 +14,7 @@ from types import ModuleType
 from typing import Callable
 
 from agent.calllog import MAX_LOGGED_OUTPUT, CallLogger
-from agent.tools import read_file, run_scan, run_tests
+from agent.tools import edit_file, read_file, run_scan, run_tests
 from agent.tools.context import ToolContext
 from agent.tools.errors import ToolError
 from agent.tools.schema import validate
@@ -34,7 +34,13 @@ def _from_module(module: ModuleType, writes: bool = False) -> Tool:
 
 
 TOOLS: dict[str, Tool] = {
-    t.name: t for t in (_from_module(run_scan), _from_module(read_file), _from_module(run_tests))
+    t.name: t
+    for t in (
+        _from_module(run_scan),
+        _from_module(read_file),
+        _from_module(run_tests),
+        _from_module(edit_file, writes=True),
+    )
 }
 
 

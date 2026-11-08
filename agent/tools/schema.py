@@ -1,11 +1,14 @@
 """Strict JSON-schema validation for tool arguments (the subset the tools use).
 
 Supported: type (object, string, integer, boolean), properties, required,
-additionalProperties: false, enum, minLength, maxLength, minimum, maximum.
+additionalProperties: false, enum, minLength, maxLength, pattern (full match),
+minimum, maximum.
 Returns a list of plain-text problems; an empty list means valid.
 """
 
 from __future__ import annotations
+
+import re
 
 _TYPE_NAMES = {"object": "an object", "string": "a string", "integer": "an integer", "boolean": "true or false"}
 
@@ -34,6 +37,8 @@ def _check_value(name: str, value, spec: dict) -> list[str]:
             problems.append(f"'{name}' must not be empty" if spec["minLength"] == 1 else f"'{name}' is too short")
         if "maxLength" in spec and len(value) > spec["maxLength"]:
             problems.append(f"'{name}' must be at most {spec['maxLength']} characters")
+        elif "pattern" in spec and value and not re.fullmatch(spec["pattern"], value):
+            problems.append(f"'{name}' has an invalid format")
     if isinstance(value, int) and not isinstance(value, bool):
         if "minimum" in spec and value < spec["minimum"]:
             problems.append(f"'{name}' must be >= {spec['minimum']}")

@@ -13,8 +13,11 @@ Creates `.venv` (the agent) and `sandbox/.venv` (the interpreter the target repo
 ## Run
 
 ```bash
+make reset   # fresh sandbox clone in sandbox/work, on branch patchpilot/fix
 make run
 ```
+
+The agent only ever edits `sandbox/work` (a throwaway git clone of `sandbox/template`), never the template or this repo. `make reset` rebuilds it; running it twice gives the same result.
 
 ## Test
 
@@ -30,6 +33,8 @@ Call one tool by hand (logged to `logs/<run_id>.jsonl`):
 .venv/bin/python -m agent.tools run_tests '{}'
 ```
 
+`edit_file` is not callable this way: it needs a human approver (the checkpoint arrives with the loop).
+
 ## Layout
 
 | Path | What it is | Day |
@@ -41,7 +46,8 @@ Call one tool by hand (logged to `logs/<run_id>.jsonl`):
 | `agent/tools/` | `run_scan`, `read_file`, `run_tests` (strict schemas, plain-text errors), `edit_file` | 2–3 |
 | `agent/tools/registry.py` | `call_tool()`: validate, run, turn failures into plain text, log | 2 |
 | `agent/calllog.py` | JSONL call log: input, output, ok, duration per call | 2 |
-| `sandbox/reset.sh` | Resets the sandbox clone | 3 |
+| `agent/tools/edit_file.py` | The only write tool: one pin in `requirements.txt`, idempotent, no downgrades, sandbox only, approval before write | 3 |
+| `sandbox/reset.sh`, `agent/sandbox.py` | Rebuild `sandbox/work` from the template (or a scenario variant), baseline commit, branch `patchpilot/fix` | 3 |
 | `agent/loop.py` | ReAct loop wired to the stop rule | 4 |
 | `agent/checkpoint.py` | Human approval of the diff | 5 |
 | `agent/recovery.py` | Retries, rollback, partial failure | 6 |

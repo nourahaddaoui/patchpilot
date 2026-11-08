@@ -40,3 +40,9 @@ def test_bounds_and_enum():
     assert validate(SCHEMA, {"path": "x" * 11}) == ["'path' must be at most 10 characters"]
     assert validate(SCHEMA, {"path": "x", "n": 9}) == ["'n' must be <= 5"]
     assert validate(SCHEMA, {"path": "x", "mode": "c"}) == ["'mode' must be one of ['a', 'b']"]
+
+
+def test_pattern_is_a_full_match():
+    schema = {"type": "object", "properties": {"v": {"type": "string", "pattern": r"[0-9][0-9.]*"}}}
+    assert validate(schema, {"v": "2.32.4"}) == []
+    assert validate(schema, {"v": "2.32.4; rm -rf /"}) == ["'v' has an invalid format"]
