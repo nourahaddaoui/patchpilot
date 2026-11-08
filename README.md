@@ -13,11 +13,17 @@ Creates `.venv` (the agent) and `sandbox/.venv` (the interpreter the target repo
 ## Run
 
 ```bash
-make reset   # fresh sandbox clone in sandbox/work, on branch patchpilot/fix
-make run
+cp .env.example .env   # then put your OPENAI_API_KEY in .env (git-ignored, never commit it)
+make run               # resets sandbox/work from the template, then runs the agent
 ```
 
-The agent only ever edits `sandbox/work` (a throwaway git clone of `sandbox/template`), never the template or this repo. `make reset` rebuilds it; running it twice gives the same result.
+The agent only ever edits `sandbox/work` (a throwaway git clone of `sandbox/template`), never the template or this repo. `make reset` rebuilds it; running it twice gives the same result. `python -m agent --no-reset` runs on the existing sandbox.
+
+Each run prints its stop reason, step count and cost, and writes its trajectory to `logs/<run_id>.jsonl`: a `start` record, one `model` record per turn (tokens, cost), one record per tool call (input, output, time) and a final `stop` record with the named stop reason. When the run ends `done` after an approved edit, the fix is committed on branch `patchpilot/fix` inside `sandbox/work`.
+
+The model is OpenAI `gpt-4o-mini` by default (`PATCHPILOT_MODEL` or `--model` to change it). Prices per model live in `agent/model.py`; a model without a known price is refused, because the cost cap would never fire.
+
+On Windows use `.venv\Scripts\python -m agent` and `.venv\Scripts\python -m pytest` in place of the `make` targets.
 
 ## Test
 
@@ -33,7 +39,7 @@ Call one tool by hand (logged to `logs/<run_id>.jsonl`):
 .venv/bin/python -m agent.tools run_tests '{}'
 ```
 
-`edit_file` is not callable this way: it needs a human approver (the checkpoint arrives with the loop).
+`edit_file` is not callable this way: it needs a human approver, which `python -m agent` provides.
 
 ## Layout
 
@@ -48,7 +54,8 @@ Call one tool by hand (logged to `logs/<run_id>.jsonl`):
 | `agent/calllog.py` | JSONL call log: input, output, ok, duration per call | 2 |
 | `agent/tools/edit_file.py` | The only write tool: one pin in `requirements.txt`, idempotent, no downgrades, sandbox only, approval before write | 3 |
 | `sandbox/reset.sh`, `agent/sandbox.py` | Rebuild `sandbox/work` from the template (or a scenario variant), baseline commit, branch `patchpilot/fix` | 3 |
-| `agent/loop.py` | ReAct loop wired to the stop rule | 4 |
+| `agent/loop.py` | ReAct loop: one tool call per step, stop rule checked before every model call and every tool call | 4 |
+| `agent/model.py` | `Model` interface, OpenAI implementation (cost per call from token usage), `ScriptedModel` stub for tests | 4 |
 | `agent/checkpoint.py` | Human approval of the diff | 5 |
 | `agent/recovery.py` | Retries, rollback, partial failure | 6 |
 | `eval/` | Scenarios, fault injection, grader, results | 8–14, 16–17 |
@@ -68,6 +75,8 @@ The run ends on the **first** of these, in priority order:
 6. Step limit — 12 steps
 
 Once `check()` returns a reason, the loop makes no further tool calls.
+
+The loop checks the rule before every model call and again before every tool call (so a model call that crosses the cost cap never gets its tool run). A step is one model turn with at most one tool call; a turn where the model calls no tool still counts as a step. Every turn therefore adds a step, so a run makes at most 12 model calls and 12 tool calls no matter what the model does (`tests/test_loop.py`).
 
 ## Team
 
