@@ -12,29 +12,11 @@ import sys
 
 from agent import sandbox
 from agent.calllog import CallLogger
+from agent.checkpoint import Checkpoint
 from agent.loop import run
 from agent.model import OpenAIModel, load_dotenv
-from agent.stop_rule import Limits
+from agent.stop_rule import Limits, StopReason
 from agent.tools.context import ToolContext
-
-
-def terminal_approve(proposal: dict) -> bool:
-    """Minimal human checkpoint: show the full diff, wait for yes or no.
-
-    Day 5 (agent/checkpoint.py) replaces this with diff + scan before/after.
-    """
-    print("\n=== PatchPilot wants to edit", proposal["path"], "===")
-    print(f"{proposal['package']}: {proposal['from']} -> {proposal['to']} ({proposal['action']})\n")
-    print(proposal["diff"])
-    while True:
-        try:
-            answer = input("Apply this edit? [y/n] ").strip().lower()
-        except EOFError:
-            return False  # no human at the terminal means no
-        if answer in ("y", "yes"):
-            return True
-        if answer in ("n", "no"):
-            return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -59,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
 
     limits = Limits()
     logger = CallLogger()
-    ctx = ToolContext(repo_root=ns.repo, approve=terminal_approve)
+    ctx = ToolContext(repo_root=ns.repo)
+    ctx.approve = Checkpoint(ctx, logger)  # human sees diff + scan before/after, then y/n
     print(f"PatchPilot run {logger.run_id} on {ctx.repo_root} with {model.name} "
           f"(max {limits.max_steps} steps, ${limits.max_cost_usd:.2f}, {limits.max_failed_fixes} failed fixes)")
 
@@ -67,6 +50,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\nStop reason: {result.stop_reason.value}")
     print(f"Steps: {result.state.steps}   cost: ${result.state.cost_usd:.4f}   failed fixes: {result.state.failed_fixes}")
+    if result.stop_reason is StopReason.APPROVAL_DENIED:
+        print("You denied the edit. Nothing was written; sandbox/work is unchanged.")
     if result.commit:
         print(f"Committed fix {result.commit} on branch {sandbox.FIX_BRANCH} in {ctx.repo_root}")
     print(f"Trajectory: {result.log_path}")

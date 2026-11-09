@@ -58,7 +58,7 @@ Call one tool by hand (logged to `logs/<run_id>.jsonl`):
 | `sandbox/reset.sh`, `agent/sandbox.py` | Rebuild `sandbox/work` from the template (or a scenario variant), baseline commit, branch `patchpilot/fix` | 3 |
 | `agent/loop.py` | ReAct loop: one tool call per step, stop rule checked before every model call and every tool call | 4 |
 | `agent/model.py` | `Model` interface, OpenAI implementation (cost per call from token usage), `ScriptedModel` stub for tests | 4 |
-| `agent/checkpoint.py` | Human approval of the diff | 5 |
+| `agent/checkpoint.py` | Human checkpoint: full diff, real scan before and after (the proposed file is scanned in a temp folder), what it fixes / leaves open / introduces, then y/n. Only an explicit yes approves; no input is a no. Every decision is logged. `ScriptedHuman` stands in for the human in evals | 5 |
 | `agent/recovery.py` | Retries, rollback, partial failure | 6 |
 | `eval/` | Scenarios, fault injection, grader, results | 8–14, 16–17 |
 | `threat_model.md` | Untrusted inputs and defenses | 15 |
