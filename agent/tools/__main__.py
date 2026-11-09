@@ -12,6 +12,7 @@ import json
 import sys
 
 from agent.calllog import CallLogger
+from agent.model import load_dotenv
 from agent.tools.context import PROJECT_ROOT, ToolContext
 from agent.tools.registry import TOOLS, call_tool
 
@@ -22,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("args", nargs="?", default="{}", help="JSON object of tool arguments")
     parser.add_argument("--repo", default=str(PROJECT_ROOT / "sandbox" / "template"))
     ns = parser.parse_args(argv)
+    load_dotenv()
     try:
         args = json.loads(ns.args)
     except json.JSONDecodeError as e:

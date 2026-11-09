@@ -178,6 +178,7 @@ def run(args: dict, ctx: ToolContext) -> str:
     if ctx.approve is None:
         raise ToolError("approval_required", "edits need human approval and no approver is connected. Nothing was written.")
     proposal = {k: result[k] for k in ("path", "package", "action", "from", "to", "diff")}
+    proposal["new_text"] = plan["new_text"]  # lets the checkpoint scan the file as it would be
     if not ctx.approve(proposal):
         raise ToolError("approval_denied", "the human denied this edit. Nothing was written. Stop the run.")
 

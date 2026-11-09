@@ -48,7 +48,10 @@ def test_missing_file(ctx):
 def test_symlink_escape_is_refused(ctx, tmp_path):
     outside = tmp_path / "outside.py"
     outside.write_text("x = 1")
-    os.symlink(outside, ctx.repo_root / "link.py")
+    try:
+        os.symlink(outside, ctx.repo_root / "link.py")
+    except OSError:
+        pytest.skip("this OS user cannot create symlinks (Windows without Developer Mode)")
     with pytest.raises(ToolError) as e:
         read_file.run({"path": "link.py"}, ctx)
     assert e.value.kind == "not_allowed"
