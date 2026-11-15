@@ -35,7 +35,7 @@ def test_tool_call_reply_is_parsed_and_priced():
     assert (reply.input_tokens, reply.output_tokens) == (1000, 200)
     assert reply.cost_usd == pytest.approx((1000 * 0.15 + 200 * 0.60) / 1_000_000)
     assert completions.kwargs["parallel_tool_calls"] is False
-    assert [t["function"]["name"] for t in completions.kwargs["tools"]] == ["run_scan", "read_file", "run_tests", "edit_file"]
+    assert [t["function"]["name"] for t in completions.kwargs["tools"]] == ["run_scan", "read_file", "run_tests", "edit_file", "create_issue"]
 
 
 def test_text_reply_has_no_tool_calls():

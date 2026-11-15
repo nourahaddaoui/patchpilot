@@ -7,3 +7,4 @@ logs/*.jsonl
 sandbox/work/
 sandbox/.venv/
 .env
+logs/issues/
