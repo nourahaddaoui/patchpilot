@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from agent import sandbox
@@ -16,7 +17,9 @@ from agent.checkpoint import Checkpoint
 from agent.loop import run
 from agent.model import OpenAIModel, load_dotenv
 from agent.stop_rule import Limits, StopReason
-from agent.tools.context import ToolContext
+from agent.tools.context import PROJECT_ROOT, ToolContext
+
+ISSUE_ARCHIVE = PROJECT_ROOT / "logs" / "issues"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
 
     limits = Limits()
     logger = CallLogger()
-    ctx = ToolContext(repo_root=ns.repo)
+    ctx = ToolContext(repo_root=ns.repo, issue_archive=ISSUE_ARCHIVE)
     ctx.approve = Checkpoint(ctx, logger)  # human sees diff + scan before/after, then y/n
     print(f"PatchPilot run {logger.run_id} on {ctx.repo_root} with {model.name} "
           f"(max {limits.max_steps} steps, ${limits.max_cost_usd:.2f}, {limits.max_failed_fixes} failed fixes)")
@@ -51,7 +54,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\nStop reason: {result.stop_reason.value}")
     print(f"Steps: {result.state.steps}   cost: ${result.state.cost_usd:.4f}   failed fixes: {result.state.failed_fixes}")
     if result.stop_reason is StopReason.APPROVAL_DENIED:
-        print("You denied the edit. Nothing was written; sandbox/work is unchanged.")
+        print("You denied the change. Nothing was written or filed.")
+    for msg in result.messages:
+        if msg.get("role") != "tool" or '"filed"' not in (msg.get("content") or ""):
+            continue
+        try:
+            info = json.loads(msg["content"])
+        except json.JSONDecodeError:
+            continue
+        state = "filed" if info.get("filed") else "already existed"
+        print(f"Issue #{info.get('number')} {state}: {info.get('title')}")
+        print(f"  saved to: {info.get('url') or info.get('saved_to') or 'sandbox/work/.git/patchpilot-issues/'}")
     if result.commit:
         print(f"Committed fix {result.commit} on branch {sandbox.FIX_BRANCH} in {ctx.repo_root}")
     print(f"Trajectory: {result.log_path}")

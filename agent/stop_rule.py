@@ -7,13 +7,20 @@ A run ends on the FIRST of these conditions, checked in this priority order:
 1. APPROVAL_DENIED   - the human rejected the proposed diff at the checkpoint.
 2. NO_FIXED_VERSION  - the scanner reports no fixed version for the vulnerability.
 3. DONE              - the scan is clean AND the tests are green (both required).
+3b. HANDED_OFF       - the agent filed an issue for a human (create_issue succeeded).
 4. FIX_ATTEMPTS      - 3 fix attempts have failed.
 5. COST_CAP          - accumulated model cost has reached $0.50.
 6. STEP_LIMIT        - 12 tool-call steps have been taken.
 
-The loop calls check() before every tool call. The loop may never make another
-tool call once check() returns a reason. The returned reason is logged as the
-run's named stop reason.
+The loop calls check() before every tool call, passing the tool it is about to
+call. The loop may never make another tool call once check() returns a reason.
+The returned reason is logged as the run's named stop reason.
+
+One exception, so a human always hears about an unfixable vulnerability: once
+NO_FIXED_VERSION holds, exactly one create_issue call is still allowed (if no
+issue was filed yet). Every other limit still applies to that call. After that
+issue the reason stays NO_FIXED_VERSION; any other filed issue is HANDED_OFF.
+So a run files at most one issue.
 
 Limits are tuned during Week 1 and then frozen.
 """
@@ -31,6 +38,10 @@ class StopReason(str, Enum):
     FIX_ATTEMPTS = "fix_attempts"
     COST_CAP = "cost_cap"
     STEP_LIMIT = "step_limit"
+    HANDED_OFF = "handed_off"
+
+
+ISSUE_TOOL = "create_issue"
 
 
 @dataclass(frozen=True)
@@ -49,6 +60,7 @@ class RunState:
     tests_green: bool = False
     approval_denied: bool = False
     no_fixed_version: bool = False
+    issue_filed: bool = False
     history: list[dict] = field(default_factory=list)
 
     def record_step(self, tool_name: str, cost_usd: float = 0.0) -> None:
@@ -60,14 +72,21 @@ class RunState:
         )
 
 
-def check(state: RunState, limits: Limits = Limits()) -> StopReason | None:
-    """Return the stop reason if the run must end now, else None."""
+def check(
+    state: RunState, limits: Limits = Limits(), next_tool: str | None = None
+) -> StopReason | None:
+    """Return the stop reason if the run must end now, else None.
+
+    next_tool is the tool the loop is about to call (None = unknown, strictest).
+    """
     if state.approval_denied:
         return StopReason.APPROVAL_DENIED
-    if state.no_fixed_version:
+    if state.no_fixed_version and not (next_tool == ISSUE_TOOL and not state.issue_filed):
         return StopReason.NO_FIXED_VERSION
     if state.scan_clean and state.tests_green:
         return StopReason.DONE
+    if state.issue_filed:
+        return StopReason.HANDED_OFF
     if state.failed_fixes >= limits.max_failed_fixes:
         return StopReason.FIX_ATTEMPTS
     if state.cost_usd >= limits.max_cost_usd:

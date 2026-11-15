@@ -17,6 +17,8 @@ What the loop learns from tool results (the RunState flags):
 - edit_file refused for any other reason -> one failed fix attempt.
 - run_tests ok -> tests_green = result.green; red after an edit -> one failed fix attempt.
 - run_tests install_failed after an edit (pinned version does not exist) -> one failed fix attempt.
+- any write denied by the human (edit_file or create_issue) -> approval_denied.
+- create_issue ok -> issue_filed (after no_fixed_version, exactly one issue call is allowed).
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from dataclasses import dataclass, field
 from agent import sandbox
 from agent.calllog import CallLogger
 from agent.model import Model, ModelReply
-from agent.stop_rule import Limits, RunState, StopReason, check
+from agent.stop_rule import ISSUE_TOOL, Limits, RunState, StopReason, check
 from agent.tools.context import ToolContext
 from agent.tools.registry import ToolResult, call_tool, tool_definitions
 
@@ -38,6 +40,7 @@ Tools:
 - read_file: read requirements.txt or other allowlisted files.
 - edit_file: set one package's exact pin in requirements.txt. A human approves every edit.
 - run_tests: install requirements.txt and run the repo's tests.
+- create_issue: hand a problem to a human as an issue. A human approves every issue.
 
 Procedure:
 1. run_scan to see what is vulnerable.
@@ -50,7 +53,8 @@ Procedure:
 Rules:
 - Call exactly one tool per turn.
 - Only change requirements.txt, and only through edit_file. Never edit or delete tests.
-- If a finding has no fixed version, do not guess one.
+- If a finding has no fixed version, do not guess one: call create_issue once so a human can decide.
+- If a fix keeps breaking the tests, call create_issue once instead of retrying forever.
 - If the human denies an edit, do not try again.
 - The run ends automatically when the scan is clean and the tests pass, or when a limit is hit.
 """
@@ -83,6 +87,9 @@ def _json(content: str) -> dict | None:
 def observe(state: RunState, result: ToolResult, flags: dict) -> None:
     """Update the run state from one tool result. `flags` holds loop-only bookkeeping."""
     data = _json(result.content) if result.ok else None
+    if result.error_type == "approval_denied":  # any write the human refused
+        state.approval_denied = True
+        return
 
     if result.tool == "run_scan" and data is not None:
         vulns = data.get("vulnerabilities") or []
@@ -96,8 +103,6 @@ def observe(state: RunState, result: ToolResult, flags: dict) -> None:
             state.tests_green = False
             flags["edited_since_tests"] = True
             flags["edits"] = flags.get("edits", 0) + 1
-        elif result.error_type == "approval_denied":
-            state.approval_denied = True
         elif not result.ok:
             state.failed_fixes += 1
 
@@ -111,6 +116,9 @@ def observe(state: RunState, result: ToolResult, flags: dict) -> None:
             state.tests_green = False
             state.failed_fixes += 1
             flags["edited_since_tests"] = False
+
+    elif result.tool == ISSUE_TOOL and data is not None:
+        state.issue_filed = True
 
 
 def _assistant_message(reply: ModelReply) -> dict:
@@ -144,7 +152,8 @@ def run(
                            "max_failed_fixes": limits.max_failed_fixes}})
 
     while True:
-        reason = check(state, limits)
+        # Can the run go on at all? (Best case: the next call is the one allowed issue.)
+        reason = check(state, limits, next_tool=ISSUE_TOOL)
         if reason:
             break
 
@@ -158,15 +167,18 @@ def run(
         messages.append(_assistant_message(reply))
 
         if not reply.tool_calls:
+            reason = check(state, limits)  # e.g. no fixed version and the model did not file an issue
+            if reason:
+                break
             state.record_step("(no tool call)")
             messages.append({"role": "user", "content": NUDGE})
             continue
 
-        reason = check(state, limits)  # the model call may have pushed cost over the cap
+        call = reply.tool_calls[0]
+        reason = check(state, limits, next_tool=call.name)  # cost cap, or a non-issue call after no fix
         if reason:
             break
 
-        call = reply.tool_calls[0]
         try:
             args = json.loads(call.arguments) if call.arguments.strip() else {}
         except json.JSONDecodeError:

@@ -41,7 +41,16 @@ Call one tool by hand (logged to `logs/<run_id>.jsonl`):
 .venv/bin/python -m agent.tools run_tests '{}'
 ```
 
-`edit_file` is not callable this way: it needs a human approver, which `python -m agent` provides.
+`edit_file` and `create_issue` are not callable this way: they need a human approver, which `python -m agent` provides.
+
+## Filing issues (`create_issue`)
+
+The agent can hand a problem to a human: a vulnerability with no fixed version, or a fix that breaks the tests. The checkpoint shows the exact title and body and asks `File this issue? [y/n]`. Filing the same title twice returns the existing issue, `@mentions` are put in code spans so nobody is pinged, and a run files at most one issue.
+
+| Mode | Set | Where the issue goes |
+|---|---|---|
+| `local` (default) | nothing | `logs/issues/<time>-NNNN.json` (git-ignored, survives `make reset`) |
+| `github` | `PATCHPILOT_ISSUES=github`, `PATCHPILOT_GITHUB_REPO=owner/name`, `GITHUB_TOKEN` | A real issue on that repo. Use a test repo. The token is never logged. |
 
 ## Layout
 
@@ -54,7 +63,8 @@ Call one tool by hand (logged to `logs/<run_id>.jsonl`):
 | `agent/tools/` | `run_scan`, `read_file`, `run_tests` (strict schemas, plain-text errors), `edit_file` | 2–3 |
 | `agent/tools/registry.py` | `call_tool()`: validate, run, turn failures into plain text, log | 2 |
 | `agent/calllog.py` | JSONL call log: input, output, ok, duration per call | 2 |
-| `agent/tools/edit_file.py` | The only write tool: one pin in `requirements.txt`, idempotent, no downgrades, sandbox only, approval before write | 3 |
+| `agent/tools/edit_file.py` | Write tool: one pin in `requirements.txt`, idempotent, no downgrades, sandbox only, approval before write | 3 |
+| `agent/tools/create_issue.py` | Write tool: hand a problem to a human as an issue (local file or GitHub), idempotent by title, approval before filing | 5 |
 | `sandbox/reset.sh`, `agent/sandbox.py` | Rebuild `sandbox/work` from the template (or a scenario variant), baseline commit, branch `patchpilot/fix` | 3 |
 | `agent/loop.py` | ReAct loop: one tool call per step, stop rule checked before every model call and every tool call | 4 |
 | `agent/model.py` | `Model` interface, OpenAI implementation (cost per call from token usage), `ScriptedModel` stub for tests | 4 |
@@ -72,11 +82,12 @@ The run ends on the **first** of these, in priority order:
 1. Approval denied
 2. No fixed version exists
 3. Done — scan clean **and** tests green
-4. 3 failed fix attempts
-5. Cost cap — $0.50
-6. Step limit — 12 steps
+4. Handed off — the agent filed an issue for a human
+5. 3 failed fix attempts
+6. Cost cap — $0.50
+7. Step limit — 12 steps
 
-Once `check()` returns a reason, the loop makes no further tool calls.
+Once `check()` returns a reason, the loop makes no further tool calls. One exception: after "no fixed version", a single `create_issue` call is still allowed so a human hears about it; the reason then stays `no_fixed_version`.
 
 The loop checks the rule before every model call and again before every tool call (so a model call that crosses the cost cap never gets its tool run). A step is one model turn with at most one tool call; a turn where the model calls no tool still counts as a step. Every turn therefore adds a step, so a run makes at most 12 model calls and 12 tool calls no matter what the model does (`tests/test_loop.py`).
 

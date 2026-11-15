@@ -31,6 +31,15 @@ class ToolContext:
     # Human checkpoint for write tools: called with the proposal (incl. full diff),
     # returns True to approve. None means no approver, so every write is refused.
     approve: Optional[Callable[[dict], bool]] = None
+    # create_issue: "local" (default, free, offline) writes to the sandbox's .git dir;
+    # "github" posts to github_repo ("owner/name") with $GITHUB_TOKEN.
+    issue_mode: str = field(default_factory=lambda: os.environ.get("PATCHPILOT_ISSUES", "local"))
+    github_repo: Optional[str] = field(default_factory=lambda: os.environ.get("PATCHPILOT_GITHUB_REPO") or None)
+    github_timeout_s: int = 20
+    # HTTP transport for create_issue (tests inject a fake): (method, url, headers, body, timeout) -> (status, json)
+    http: Optional[Callable] = None
+    # Permanent copy of every filed issue (survives sandbox resets). The CLI sets logs/issues.
+    issue_archive: Optional[Path] = None
 
     def __post_init__(self) -> None:
         self.repo_root = Path(self.repo_root).resolve()

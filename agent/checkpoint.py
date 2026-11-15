@@ -127,6 +127,23 @@ def render(proposal: dict, before: dict, after: dict) -> str:
     return "\n".join(lines)
 
 
+def render_issue(proposal: dict) -> str:
+    """What the human sees before an issue is filed: where it goes, the exact title and body."""
+    where = (f"GitHub repo {clean(proposal.get('repo'))}" if proposal.get("mode") == "github"
+             else "the local issue store (nothing leaves this machine)")
+    return "\n".join([
+        "",
+        "=" * 72,
+        f" PatchPilot wants to file an issue in {where}",
+        "=" * 72,
+        "",
+        f"Title: {clean(proposal.get('title'), 200)}",
+        "",
+        clean_block(proposal.get("body", "")),
+        "",
+    ])
+
+
 def clean_block(text: str) -> str:
     return "\n".join(_CONTROL.sub("", line) for line in (text or "").splitlines())
 
@@ -153,10 +170,10 @@ class Checkpoint:
         self.max_prompts = max_prompts
         self.decisions: list[dict] = []
 
-    def _answer(self) -> tuple[bool, str]:
+    def _answer(self, question: str = "Apply this edit? [y/n] ") -> tuple[bool, str]:
         for _ in range(self.max_prompts):
             try:
-                raw = self.ask("Apply this edit? [y/n] ")
+                raw = self.ask(question)
             except (EOFError, KeyboardInterrupt):
                 return False, "<no input>"
             answer = (raw or "").strip().lower()
@@ -168,6 +185,8 @@ class Checkpoint:
         return False, "<no valid answer>"  # unclear means no
 
     def __call__(self, proposal: dict) -> bool:
+        if proposal.get("tool") == "create_issue":
+            return self._issue(proposal)
         before = scan_text(self.ctx)
         after = scan_text(self.ctx, proposal["new_text"]) if "new_text" in proposal else {
             "error": "proposal has no file contents to preview"}
@@ -189,6 +208,25 @@ class Checkpoint:
             "scan_after": sorted(_ids(after)) if "error" not in after else {"error": after["error"]},
             "fixes": effect["fixed"],
             "introduces": effect["introduced"],
+        }
+        self.decisions.append(decision)
+        if self.logger is not None:
+            self.logger.log(decision)
+        return approved
+
+
+    def _issue(self, proposal: dict) -> bool:
+        self.show(render_issue(proposal))
+        t0 = time.perf_counter()
+        approved, answer = self._answer("File this issue? [y/n] ")
+        waited_ms = round((time.perf_counter() - t0) * 1000, 1)
+        self.show("Approved: filing the issue." if approved else "Denied: no issue was filed; the run will stop.")
+        decision = {
+            "event": "checkpoint",
+            "approved": approved,
+            "answer": answer,
+            "waited_ms": waited_ms,
+            "proposal": {k: proposal.get(k) for k in ("tool", "mode", "repo", "title")},
         }
         self.decisions.append(decision)
         if self.logger is not None:
