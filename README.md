@@ -5,40 +5,57 @@ A vulnerability remediation agent that scans a Python repo with Trivy, bumps a v
 ## Setup
 
 ```bash
-make setup
+python scripts/setup.py
 ```
 
-Creates `.venv` (the agent) and `sandbox/.venv` (the interpreter the target repo's tests run in), installs the Python dependencies, checks that Trivy is installed and downloads its vulnerability DB into `.cache/trivy` so scans are reproducible.
+Works the same on Windows, macOS and Linux (Python 3.10+, Git and Trivy installed; no `make` or `bash` needed). It creates `.venv` (the agent) and `sandbox/.venv` (the interpreter the template repo's tests run in), installs the dependencies, and downloads Trivy's vulnerability DB once into `.cache/trivy` so scans are offline and reproducible. Running it again keeps what is there.
 
 ## Run
 
 ```bash
-cp .env.example .env   # then put your OPENAI_API_KEY in .env (git-ignored, never commit it)
-make run               # resets sandbox/work from the template, then runs the agent
+python run.py
 ```
 
-The agent only ever edits `sandbox/work` (a throwaway git clone of `sandbox/template`), never the template or this repo. `make reset` rebuilds it; running it twice gives the same result. `python -m agent --no-reset` runs on the existing sandbox.
+That fixes the template repo with the free rule-based model: no API key, no cost. Every edit and every issue waits for your `y`.
 
-Each run prints its stop reason, step count and cost, and writes its trajectory to `logs/<run_id>.jsonl`: a `start` record, one `model` record per turn (tokens, cost), one record per tool call (input, output, time) and a final `stop` record with the named stop reason. When the run ends `done` after an approved edit, the fix is committed on branch `patchpilot/fix` inside `sandbox/work`.
+| Command | What it does |
+|---|---|
+| `python run.py` | Template repo, free `rules` model |
+| `python run.py --target https://github.com/OWNER/REPO` | A real repo: cloned into the sandbox, fixed there |
+| `python run.py --target C:/code/my-repo` | A local repo (its committed files only) |
+| `python run.py --model gpt-4o-mini` | GPT chooses the tools; needs `OPENAI_API_KEY` in `.env`; cost counted against the $0.50 cap |
+| `python run.py --no-reset` | Run again on the existing `sandbox/work` |
 
-The model is OpenAI `gpt-4o-mini` by default (`PATCHPILOT_MODEL` or `--model` to change it). Prices per model live in `agent/model.py`; a model without a known price is refused, because the cost cap would never fire.
+**Real repos are never edited in place.** A target is cloned into `sandbox/sources/<name>`, copied into the throwaway `sandbox/work`, and fixed there; its tests run in their own interpreter (`sandbox/.venvs/<name>`). A fix that ends `done` is committed on branch `patchpilot/fix` inside `sandbox/work` (the run prints `git -C sandbox/work show <sha>`); pushing it to the real repo is up to you. Only a root `requirements.txt` with `==` pins can be edited; findings elsewhere (other lockfiles) end in an issue for a human. A repo with no tests can never reach `done`, because the fix cannot be verified.
 
-On Windows use `.venv\Scripts\python -m agent` and `.venv\Scripts\python -m pytest` in place of the `make` targets.
+**Running a real repo's tests runs its code on your machine** (the sandbox is a folder and a venv, not a container). Only point PatchPilot at repos you trust.
 
-The Trivy DB is about 1.6 GB unpacked. To keep it somewhere other than `.cache/trivy` (e.g. another disk), download it with `bash scripts/setup_trivy.sh D:/patchpilot-cache/trivy` and set `PATCHPILOT_TRIVY_CACHE` to that path in `.env`.
+Each run prints its stop reason, step count and cost, and writes its trajectory to `logs/<run_id>.jsonl`: a `start` record, one `model` record per turn (tokens, cost), one record per tool call (input, output, time), `checkpoint` and `recovery` events, and a final `stop` record with the named stop reason.
+
+GPT models: prices live in `agent/model.py`; a model without a known price is refused, because the cost cap would never fire. `PATCHPILOT_MODEL` sets the default model.
+
+The Trivy DB is about 1.6 GB unpacked. To keep it on another disk, set `PATCHPILOT_TRIVY_CACHE` (in your environment or `.env`) before `python scripts/setup.py`.
+
+## Recovery
+
+| Failure | What happens |
+|---|---|
+| Scanner or test run times out, or returns garbled output | Retried once automatically (logged as a `recovery` retry). Write tools are never retried. |
+| Tests fail right after an edit | `requirements.txt` goes back to the last version the tests passed on; the model is told and can try another version or file an issue. |
+| Run ends early (limit, denial) with an untested edit | The edit is reverted; edits the tests already passed on stay. |
 
 ## Test
 
 ```bash
-make test
+python run.py test
 ```
 
 Call one tool by hand (logged to `logs/<run_id>.jsonl`):
 
 ```bash
-.venv/bin/python -m agent.tools read_file '{"path": "requirements.txt"}'
-.venv/bin/python -m agent.tools run_scan '{}'
-.venv/bin/python -m agent.tools run_tests '{}'
+python -m agent.tools read_file '{"path": "requirements.txt"}'
+python -m agent.tools run_scan '{}'
+python -m agent.tools run_tests '{}'
 ```
 
 `edit_file` and `create_issue` are not callable this way: they need a human approver, which `python -m agent` provides.
@@ -49,7 +66,7 @@ The agent can hand a problem to a human: a vulnerability with no fixed version, 
 
 | Mode | Set | Where the issue goes |
 |---|---|---|
-| `local` (default) | nothing | `logs/issues/<time>-NNNN.json` (git-ignored, survives `make reset`) |
+| `local` (default) | nothing | `logs/issues/<time>-NNNN.json` (git-ignored, survives sandbox resets) |
 | `github` | `PATCHPILOT_ISSUES=github`, `PATCHPILOT_GITHUB_REPO=owner/name`, `GITHUB_TOKEN` | A real issue on that repo. Use a test repo. The token is never logged. |
 
 ## Layout
@@ -69,7 +86,10 @@ The agent can hand a problem to a human: a vulnerability with no fixed version, 
 | `agent/loop.py` | ReAct loop: one tool call per step, stop rule checked before every model call and every tool call | 4 |
 | `agent/model.py` | `Model` interface, OpenAI implementation (cost per call from token usage), `ScriptedModel` stub for tests | 4 |
 | `agent/checkpoint.py` | Human checkpoint: full diff, real scan before and after (the proposed file is scanned in a temp folder), what it fixes / leaves open / introduces, then y/n. Only an explicit yes approves; no input is a no. Every decision is logged. `ScriptedHuman` stands in for the human in evals | 5 |
-| `agent/recovery.py` | Retries, rollback, partial failure | 6 |
+| `agent/recovery.py` | Retries, rollback to the last tested-good file, cleanup after partial failure | 6 |
+| `agent/rules_model.py` | `RulesModel`: free, deterministic model behind the same interface (the default; the eval baseline) | 6 |
+| `agent/targets.py` | Real repos as targets: clone into `sandbox/sources`, per-target test interpreter | 6 |
+| `scripts/setup.py`, `run.py` | One setup command and one run command, any OS | 7 |
 | `eval/` | Scenarios, fault injection, grader, results | 8–14, 16–17 |
 | `threat_model.md` | Untrusted inputs and defenses | 15 |
 | `errors.md` | Error taxonomy with a test per class | 13 |

@@ -58,6 +58,24 @@ def _install(ctx: ToolContext) -> None:
             "install_failed",
             f"installing requirements.txt failed, so tests were not run. A pinned version may not exist. pip said: {detail}",
         )
+    _install_project(ctx)
+
+
+def _install_project(ctx: ToolContext) -> None:
+    """Real repos often import their own package in tests: install it (no deps), best effort.
+    A failure here is not fatal; the tests themselves will show any import error."""
+    if not ctx.install_project:
+        return
+    if not ((ctx.repo_root / "pyproject.toml").is_file() or (ctx.repo_root / "setup.py").is_file()):
+        return
+    try:
+        ctx.runner(
+            [ctx.test_python, "-m", "pip", "install", "-q", "--no-deps", "-e", "."],
+            cwd=str(ctx.repo_root), capture_output=True, text=True,
+            timeout=ctx.install_timeout_s, env=_env(),
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
 
 
 def parse_counts(text: str) -> dict:

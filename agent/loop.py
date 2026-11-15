@@ -19,6 +19,10 @@ What the loop learns from tool results (the RunState flags):
 - run_tests install_failed after an edit (pinned version does not exist) -> one failed fix attempt.
 - any write denied by the human (edit_file or create_issue) -> approval_denied.
 - create_issue ok -> issue_filed (after no_fixed_version, exactly one issue call is allowed).
+
+Recovery (agent/recovery.py): transient tool failures are retried once; tests that
+go red right after an edit roll requirements.txt back; a run that does not end
+DONE reverts any uncommitted edit.
 """
 
 from __future__ import annotations
@@ -26,12 +30,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from agent import sandbox
+from agent import recovery, sandbox
 from agent.calllog import CallLogger
 from agent.model import Model, ModelReply
 from agent.stop_rule import ISSUE_TOOL, Limits, RunState, StopReason, check
 from agent.tools.context import ToolContext
-from agent.tools.registry import ToolResult, call_tool, tool_definitions
+from agent.tools.registry import ToolResult, tool_definitions
 
 SYSTEM_PROMPT = """You are PatchPilot, an agent that fixes known-vulnerable Python dependencies in one repository.
 
@@ -147,6 +151,7 @@ def run(
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": task},
     ]
+    good = recovery.snapshot(ctx.repo_root)  # last requirements.txt the tests (or the start) vouch for
     logger.log({"event": "start", "model": model.name, "repo": str(ctx.repo_root),
                 "limits": {"max_steps": limits.max_steps, "max_cost_usd": limits.max_cost_usd,
                            "max_failed_fixes": limits.max_failed_fixes}})
@@ -183,16 +188,26 @@ def run(
             args = json.loads(call.arguments) if call.arguments.strip() else {}
         except json.JSONDecodeError:
             args = call.arguments  # registry rejects non-objects with a plain-text error
-        result = call_tool(call.name, args, ctx, logger, step=step)
+        result = recovery.call_with_retry(call.name, args, ctx, logger, step)  # transient failures retried once
         state.record_step(call.name)
+        edited_before = flags.get("edited_since_tests", False)
         observe(state, result, flags)
+        if call.name == "run_tests" and state.tests_green:
+            good = recovery.snapshot(ctx.repo_root)
+        elif call.name == "run_tests" and edited_before:
+            result = recovery.rollback_after_failed_tests(ctx, result, good, logger, step)  # back to known-good
+            flags["edited_since_tests"] = False
+            if flags.get("edits"):
+                flags["edits"] -= 1
         messages.append({"role": "tool", "tool_call_id": call.id, "content": result.content})
 
+    reverted = recovery.cleanup_after_run(ctx, reason is StopReason.DONE, good, logger)  # no half-applied edits
     sha = None
     if reason is StopReason.DONE and commit and flags.get("edits") and sandbox.is_sandbox(ctx.repo_root):
         sha = sandbox.commit_fix(ctx.repo_root, "PatchPilot: bump vulnerable pins in requirements.txt")
 
     logger.log({"event": "stop", "reason": reason.value, "steps": state.steps,
                 "cost_usd": round(state.cost_usd, 6), "failed_fixes": state.failed_fixes,
-                "scan_clean": state.scan_clean, "tests_green": state.tests_green, "commit": sha})
+                "scan_clean": state.scan_clean, "tests_green": state.tests_green, "commit": sha,
+                "reverted_uncommitted_edit": reverted})
     return RunResult(logger.run_id, reason, state, sha, str(logger.path), messages)

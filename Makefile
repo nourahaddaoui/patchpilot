@@ -1,26 +1,21 @@
 .RECIPEPREFIX := >
-PYTHON := .venv/bin/python
-SANDBOX_PYTHON := sandbox/.venv/bin/python
-TRIVY_CACHE := .cache/trivy
+# Thin wrappers; the real commands work without make on any OS:
+#   python scripts/setup.py   |   python run.py   |   python run.py test
+PY ?= python3
 
 .PHONY: setup reset run test scan-template
 
 setup:
-> python3 -m venv .venv
-> $(PYTHON) -m pip install --upgrade pip
-> $(PYTHON) -m pip install -r requirements.txt
-> python3 -m venv sandbox/.venv
-> $(SANDBOX_PYTHON) -m pip install pytest==8.3.3
-> bash scripts/setup_trivy.sh $(TRIVY_CACHE)
+> $(PY) scripts/setup.py
 
 reset:
 > bash sandbox/reset.sh
 
 run:
-> $(PYTHON) -m agent
+> $(PY) run.py
 
 test:
-> $(PYTHON) -m pytest -q
+> $(PY) run.py test
 
 scan-template:
-> trivy fs --cache-dir $(TRIVY_CACHE) --skip-db-update --scanners vuln --format json sandbox/template
+> trivy fs --cache-dir .cache/trivy --skip-db-update --scanners vuln --format json sandbox/template

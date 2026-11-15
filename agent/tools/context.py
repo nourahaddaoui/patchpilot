@@ -27,6 +27,8 @@ class ToolContext:
     test_timeout_s: int = 120
     install_timeout_s: int = 180
     install_deps: bool = True
+    # Real repos: also `pip install --no-deps -e .` so tests can import the project itself.
+    install_project: bool = False
     runner: Callable = subprocess.run
     # Human checkpoint for write tools: called with the proposal (incl. full diff),
     # returns True to approve. None means no approver, so every write is refused.
