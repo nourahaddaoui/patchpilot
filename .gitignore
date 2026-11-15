@@ -8,3 +8,5 @@ sandbox/work/
 sandbox/.venv/
 .env
 logs/issues/
+sandbox/sources/
+sandbox/.venvs/
