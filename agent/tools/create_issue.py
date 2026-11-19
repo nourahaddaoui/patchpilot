@@ -10,6 +10,10 @@ Safety rules:
   sandbox's .git directory (never committed, wiped by reset). Mode "github" posts to
   ctx.github_repo with the token in $GITHUB_TOKEN (free API). The token is read at
   call time and never logged or returned.
+- purpose "handoff" (default) gives the problem to a human and ends the run (one per run).
+  purpose "tracking" is github mode only: it opens the issue the fix PR will close
+  ("Fixes #N") and the run goes on. A run has at most one tracking issue; asking again
+  returns the one already opened.
 """
 
 from __future__ import annotations
@@ -27,12 +31,15 @@ from agent.tools.context import ToolContext
 from agent.tools.errors import ToolError
 
 NAME = "create_issue"
+PURPOSES = ("handoff", "tracking")
 DESCRIPTION = (
     "File an issue for a human to follow up, e.g. a vulnerability with no fixed version, a fix "
     "that keeps breaking the tests, or anything you must not change yourself (CI files, code). "
     "A human must approve the exact title and body first; if they deny it, nothing is filed and "
     "the run must stop. Filing the same title twice returns the existing issue. "
-    "Returns JSON: filed, existing, number, url, mode."
+    "purpose 'handoff' (default) ends the run. purpose 'tracking' (GitHub mode only) opens the "
+    "issue your pull request will close, and the run continues. "
+    "Returns JSON: filed, existing, number, url, mode, purpose."
 )
 INPUT_SCHEMA = {
     "type": "object",
@@ -49,6 +56,12 @@ INPUT_SCHEMA = {
             "minLength": 1,
             "maxLength": 4000,
             "description": "Markdown body: what was found, what was tried, and what a human should decide.",
+        },
+        "purpose": {
+            "type": "string",
+            "enum": list(PURPOSES),
+            "description": "'handoff' (default): a human takes over and the run ends. "
+                           "'tracking' (GitHub mode only): the issue the fix PR will close; the run continues.",
         },
     },
     "required": ["title", "body"],
@@ -170,13 +183,22 @@ def run(args: dict, ctx: ToolContext) -> str:
     body = neutralize(args["body"].strip()) + FOOTER
     title_safe = neutralize(title)
     mode = ctx.issue_mode
+    purpose = args.get("purpose", "handoff")
 
     if mode not in ("local", "github"):
         raise ToolError("not_allowed", f"issue mode '{mode}' is not supported (use 'local' or 'github'). Nothing was filed.")
+    if purpose == "tracking" and mode != "github":
+        raise ToolError("not_allowed", "a tracking issue only exists in GitHub mode (there is no pull request to close it "
+                                       "in local mode). Nothing was filed. Continue the fix without it.")
     if not is_sandbox(ctx.repo_root):
         raise ToolError("not_allowed", "the target repo is not a sandbox clone; issues can only be filed for sandbox/work. Nothing was filed.")
     if mode == "github" and not (ctx.github_repo and _REPO.fullmatch(ctx.github_repo)):
         raise ToolError("not_allowed", "github mode needs PATCHPILOT_GITHUB_REPO set to 'owner/name'. Nothing was filed.")
+
+    tracked = getattr(ctx.state, "tracking_issue", None)
+    if purpose == "tracking" and tracked is not None:  # one tracking issue per run
+        return json.dumps({"filed": False, "existing": True, "number": tracked, "url": None, "mode": mode,
+                           "purpose": purpose, "title": None}, ensure_ascii=False)
 
     key = title_key(title_safe)
     known = _local_issues(ctx)
@@ -186,18 +208,18 @@ def run(args: dict, ctx: ToolContext) -> str:
         if title_key(issue.get("title", "")) == key:
             return json.dumps(
                 {"filed": False, "existing": True, "number": issue.get("number"), "url": issue.get("url"),
-                 "mode": issue.get("mode", mode), "title": issue.get("title")},
+                 "mode": issue.get("mode", mode), "purpose": purpose, "title": issue.get("title")},
                 ensure_ascii=False,
             )
 
     if ctx.approve is None:
         raise ToolError("approval_required", "filing an issue needs human approval and no approver is connected. Nothing was filed.")
     proposal = {"tool": NAME, "mode": mode, "repo": ctx.github_repo if mode == "github" else None,
-                "title": title_safe, "body": body}
+                "purpose": purpose, "title": title_safe, "body": body}
     if not ctx.approve(proposal):
         raise ToolError("approval_denied", "the human denied this issue. Nothing was filed. Stop the run.")
 
-    record = {"title": title_safe, "body": body, "mode": mode,
+    record = {"title": title_safe, "body": body, "mode": mode, "purpose": purpose,
               "created_at": datetime.now(timezone.utc).isoformat(), "url": None, "number": None}
     if mode == "github":
         created = _github(ctx, "POST", f"/repos/{ctx.github_repo}/issues", {"title": title_safe, "body": body})
@@ -206,7 +228,7 @@ def run(args: dict, ctx: ToolContext) -> str:
         record.update(number=created["number"], url=created.get("html_url"))
     record, saved_to = _save_local(ctx, record)
     result = {"filed": True, "existing": False, "number": record["number"], "url": record["url"],
-              "mode": mode, "title": title_safe}
+              "mode": mode, "purpose": purpose, "title": title_safe}
     if saved_to:
         result["saved_to"] = saved_to
     return json.dumps(result, ensure_ascii=False)

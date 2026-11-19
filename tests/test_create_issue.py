@@ -55,7 +55,8 @@ def test_local_issue_is_filed_after_approval_and_never_committed(work):
     res = call_tool("create_issue", ARGS, ctx)
     assert res.ok, res.content
     out = json.loads(res.content)
-    assert out == {"filed": True, "existing": False, "number": 1, "url": None, "mode": "local", "title": ARGS["title"]}
+    assert out == {"filed": True, "existing": False, "number": 1, "url": None, "mode": "local",
+                   "purpose": "handoff", "title": ARGS["title"]}
     proposal = ctx.approve.proposals[0]
     assert proposal["tool"] == "create_issue" and proposal["title"] == ARGS["title"]
     assert proposal["body"].endswith(create_issue.FOOTER)
@@ -176,3 +177,40 @@ def test_archive_copy_survives_sandbox_reset(work, tmp_path):
     sandbox.reset(TEMPLATE, work)  # wipes the sandbox store
     assert not (work / create_issue.STORE).exists()
     assert json.loads(saved[0].read_text())["title"] == ARGS["title"]
+
+
+# --- purpose: handoff (default) vs tracking ----------------------------------------
+
+TRACK = {**ARGS, "title": "Track: CVE-2023-32681 in requests", "purpose": "tracking"}
+
+
+def test_tracking_is_refused_in_local_mode(work):
+    ctx = make_ctx(work)
+    res = call_tool("create_issue", TRACK, ctx)
+    assert not res.ok and res.error_type == "not_allowed" and "Nothing was filed" in res.content
+    assert ctx.approve.proposals == [] and not (work / create_issue.STORE).exists()
+
+
+def test_tracking_in_github_mode_is_filed_and_marked(work, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    http = FakeHTTP((200, []), (201, {"number": 5, "html_url": "https://github.com/o/r/issues/5"}))
+    ctx = make_ctx(work, issue_mode="github", github_repo="o/r", http=http)
+    out = json.loads(call_tool("create_issue", TRACK, ctx).content)
+    assert out["filed"] is True and out["number"] == 5 and out["purpose"] == "tracking"
+    assert ctx.approve.proposals[0]["purpose"] == "tracking"
+
+
+def test_second_tracking_issue_in_a_run_returns_the_first(work, monkeypatch):
+    from agent.stop_rule import RunState
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    http = FakeHTTP()
+    ctx = make_ctx(work, issue_mode="github", github_repo="o/r", http=http)
+    ctx.state = RunState(tracking_issue=5)
+    out = json.loads(call_tool("create_issue", {**TRACK, "title": "Another tracking title"}, ctx).content)
+    assert out["existing"] is True and out["number"] == 5
+    assert ctx.approve.proposals == [] and http.calls == []
+
+
+def test_purpose_is_an_enum(work):
+    res = call_tool("create_issue", {**ARGS, "purpose": "fyi"}, make_ctx(work))
+    assert not res.ok and res.error_type == "bad_arguments" and "must be one of" in res.content

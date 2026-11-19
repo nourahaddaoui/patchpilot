@@ -131,10 +131,13 @@ def render_issue(proposal: dict) -> str:
     """What the human sees before an issue is filed: where it goes, the exact title and body."""
     where = (f"GitHub repo {clean(proposal.get('repo'))}" if proposal.get("mode") == "github"
              else "the local issue store (nothing leaves this machine)")
+    purpose = ("tracking: the fix PR will close it; the run continues"
+               if proposal.get("purpose") == "tracking" else "handoff: a human takes over; the run stops")
     return "\n".join([
         "",
         "=" * 72,
         f" PatchPilot wants to file an issue in {where}",
+        f" Purpose: {purpose}",
         "=" * 72,
         "",
         f"Title: {clean(proposal.get('title'), 200)}",
@@ -226,7 +229,7 @@ class Checkpoint:
             "approved": approved,
             "answer": answer,
             "waited_ms": waited_ms,
-            "proposal": {k: proposal.get(k) for k in ("tool", "mode", "repo", "title")},
+            "proposal": {k: proposal.get(k) for k in ("tool", "mode", "repo", "purpose", "title")},
         }
         self.decisions.append(decision)
         if self.logger is not None:

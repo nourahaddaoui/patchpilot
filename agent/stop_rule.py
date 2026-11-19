@@ -60,7 +60,8 @@ class RunState:
     tests_green: bool = False
     approval_denied: bool = False
     no_fixed_version: bool = False
-    issue_filed: bool = False
+    issue_filed: bool = False  # a handoff issue: ends the run
+    tracking_issue: int | None = None  # GitHub mode: the issue the PR will close; does not end the run
     history: list[dict] = field(default_factory=list)
 
     def record_step(self, tool_name: str, cost_usd: float = 0.0) -> None:

@@ -18,7 +18,11 @@ What the loop learns from tool results (the RunState flags):
 - run_tests ok -> tests_green = result.green; red after an edit -> one failed fix attempt.
 - run_tests install_failed after an edit (pinned version does not exist) -> one failed fix attempt.
 - any write denied by the human (edit_file or create_issue) -> approval_denied.
-- create_issue ok -> issue_filed (after no_fixed_version, exactly one issue call is allowed).
+- create_issue ok, purpose handoff -> issue_filed (after no_fixed_version, exactly one issue call is allowed).
+- create_issue ok, purpose tracking (GitHub mode) -> tracking_issue = its number; the run goes on.
+
+The loop hands its RunState to the tools as ctx.state, so a write tool can check what
+already happened in this run (e.g. open_pr needs green tests and a clean scan).
 
 Recovery (agent/recovery.py): transient tool failures are retried once; tests that
 go red right after an edit roll requirements.txt back; a run that does not end
@@ -122,7 +126,11 @@ def observe(state: RunState, result: ToolResult, flags: dict) -> None:
             flags["edited_since_tests"] = False
 
     elif result.tool == ISSUE_TOOL and data is not None:
-        state.issue_filed = True
+        if data.get("purpose") == "tracking":
+            if isinstance(data.get("number"), int):
+                state.tracking_issue = data["number"]
+        else:
+            state.issue_filed = True
 
 
 def _assistant_message(reply: ModelReply) -> dict:
@@ -146,6 +154,7 @@ def run(
     logger = logger or CallLogger()
     tools = tool_definitions()
     state = RunState()
+    ctx.state = state  # tools read (never write) what happened earlier in this run
     flags: dict = {}
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
