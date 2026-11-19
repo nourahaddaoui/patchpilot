@@ -1,4 +1,5 @@
 from agent.stop_rule import Limits, RunState, StopReason, check
+from tests.test_loop import logger, work, world  # noqa: F401  (fixtures)
 
 
 def test_fresh_run_continues():
@@ -64,3 +65,55 @@ def test_stub_loop_that_never_finishes_halts_at_max_steps():
     assert check(state, limits) is StopReason.STEP_LIMIT
     assert calls == limits.max_steps
     assert len(state.history) == limits.max_steps
+
+
+# --- GitHub mode: DONE needs the merged PR ------------------------------------------
+
+def _gh_state(**kw):
+    kw.setdefault("github_mode", True)
+    kw.setdefault("found_vulns", ["CVE-2023-32681"])
+    return RunState(**kw)
+
+
+def test_github_mode_is_not_done_before_merge():
+    assert check(_gh_state(scan_clean=True, tests_green=True)) is None
+    assert check(_gh_state(scan_clean=True, tests_green=True, pr_number=12, pr_opened=True)) is None
+
+
+def test_github_mode_is_done_after_merge():
+    assert check(_gh_state(scan_clean=True, tests_green=True, merged=True)) is StopReason.DONE
+
+
+def test_github_mode_merge_alone_is_not_done():
+    assert check(_gh_state(merged=True)) is None
+
+
+def test_github_mode_repo_clean_from_the_start_is_done():
+    assert check(_gh_state(found_vulns=[], scan_clean=True, tests_green=True)) is StopReason.DONE
+
+
+def test_local_mode_is_unchanged():
+    assert check(RunState(scan_clean=True, tests_green=True, found_vulns=["CVE-1"])) is StopReason.DONE
+    assert check(RunState(scan_clean=True, tests_green=True, merged=False)) is StopReason.DONE
+
+
+def test_twelve_steps_still_cap_github_mode():
+    assert check(_gh_state(steps=8)) is None  # the full GitHub flow fits
+    assert check(_gh_state(steps=12)) is StopReason.STEP_LIMIT
+    assert check(_gh_state(steps=12, scan_clean=True, tests_green=True)) is StopReason.STEP_LIMIT
+
+
+def test_github_run_that_never_merges_ends_at_the_step_limit(world, work, logger, monkeypatch):
+    """Clean + green but no PR merged: the loop keeps going, and the 12-step cap still ends it."""
+    import sys
+    from agent.loop import run
+    from agent.model import ScriptedModel
+    from agent.tools.context import ToolContext
+    from tests.test_loop import FIX, Approver
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    ctx = ToolContext(repo_root=work, test_python=sys.executable, install_deps=False, approve=Approver(True),
+                      issue_mode="github", github_repo="o/r", http=lambda *a: (_ for _ in ()).throw(AssertionError))
+    result = run(ScriptedModel(FIX), ctx, logger=logger)  # repeats the last call (run_scan) forever
+    assert result.state.scan_clean and result.state.tests_green and not result.state.merged
+    assert result.stop_reason is StopReason.STEP_LIMIT and result.state.steps == 12
+    assert result.commit is None

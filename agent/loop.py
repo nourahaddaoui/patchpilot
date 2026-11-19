@@ -22,6 +22,7 @@ What the loop learns from tool results (the RunState flags):
 - create_issue ok, purpose tracking (GitHub mode) -> tracking_issue = its number; the run goes on.
 - run_scan ok -> every finding id is added to found_vulns (open_pr titles the PR with them).
 - open_pr ok -> pr_number; pr_opened only if the PR was created in this run.
+- merge_pr ok -> merged (in GitHub mode DONE needs it; see stop_rule.py).
 
 The loop hands its RunState to the tools as ctx.state, so a write tool can check what
 already happened in this run (e.g. open_pr needs green tests and a clean scan).
@@ -115,6 +116,9 @@ def observe(state: RunState, result: ToolResult, flags: dict) -> None:
             state.pr_number = data["number"]
             state.pr_opened = bool(data.get("opened"))
 
+    elif result.tool == "merge_pr" and data is not None:
+        state.merged = bool(data.get("merged"))
+
     elif result.tool == "edit_file":
         if result.ok and data is not None and data.get("changed"):
             state.scan_clean = False
@@ -163,7 +167,7 @@ def run(
 ) -> RunResult:
     logger = logger or CallLogger()
     tools = tool_definitions(github_mode=ctx.github_mode)
-    state = RunState()
+    state = RunState(github_mode=ctx.github_mode)
     ctx.state = state  # tools read (never write) what happened earlier in this run
     flags: dict = {}
     messages: list[dict] = [
