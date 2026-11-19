@@ -147,6 +147,27 @@ def render_issue(proposal: dict) -> str:
     ])
 
 
+def render_pr(proposal: dict) -> str:
+    """What the human sees before a pull request is opened: where, title, body, and the exact diff."""
+    issue = proposal.get("fixes_issue")
+    return "\n".join([
+        "",
+        "=" * 72,
+        f" PatchPilot wants to open a pull request on GitHub repo {clean(proposal.get('repo'))}",
+        f" {clean(proposal.get('head'))} -> {clean(proposal.get('base'))}"
+        + (f"   (closes issue #{issue} when merged)" if issue is not None else "   (no tracking issue)"),
+        "=" * 72,
+        "",
+        f"Title: {clean(proposal.get('title'), 200)}",
+        "",
+        clean_block(proposal.get("body", "")),
+        "",
+        "--- Diff (the only file committed) " + "-" * 37,
+        clean_block(proposal.get("diff", "")),
+        "",
+    ])
+
+
 def clean_block(text: str) -> str:
     return "\n".join(_CONTROL.sub("", line) for line in (text or "").splitlines())
 
@@ -190,6 +211,9 @@ class Checkpoint:
     def __call__(self, proposal: dict) -> bool:
         if proposal.get("tool") == "create_issue":
             return self._issue(proposal)
+        if proposal.get("tool") == "open_pr":
+            return self._github_write(proposal, render_pr(proposal), "Open this pull request? [y/n] ",
+                                      ("tool", "repo", "base", "head", "title", "fixes_issue", "diff"))
         before = scan_text(self.ctx)
         after = scan_text(self.ctx, proposal["new_text"]) if "new_text" in proposal else {
             "error": "proposal has no file contents to preview"}
@@ -230,6 +254,26 @@ class Checkpoint:
             "answer": answer,
             "waited_ms": waited_ms,
             "proposal": {k: proposal.get(k) for k in ("tool", "mode", "repo", "purpose", "title")},
+        }
+        self.decisions.append(decision)
+        if self.logger is not None:
+            self.logger.log(decision)
+        return approved
+
+
+    def _github_write(self, proposal: dict, text: str, question: str, logged: tuple[str, ...]) -> bool:
+        """Show a GitHub write (PR, merge), ask y/n, log the decision. Same rules: only an explicit yes."""
+        self.show(text)
+        t0 = time.perf_counter()
+        approved, answer = self._answer(question)
+        waited_ms = round((time.perf_counter() - t0) * 1000, 1)
+        self.show("Approved: sending it to GitHub." if approved else "Denied: nothing was sent to GitHub; the run will stop.")
+        decision = {
+            "event": "checkpoint",
+            "approved": approved,
+            "answer": answer,
+            "waited_ms": waited_ms,
+            "proposal": {k: proposal.get(k) for k in logged},
         }
         self.decisions.append(decision)
         if self.logger is not None:

@@ -62,6 +62,9 @@ class RunState:
     no_fixed_version: bool = False
     issue_filed: bool = False  # a handoff issue: ends the run
     tracking_issue: int | None = None  # GitHub mode: the issue the PR will close; does not end the run
+    found_vulns: list[str] = field(default_factory=list)  # every finding id any scan in this run reported
+    pr_number: int | None = None  # GitHub mode: the PR open_pr opened (or found) in this run
+    pr_opened: bool = False  # True only if open_pr created that PR in this run (not an older one)
     history: list[dict] = field(default_factory=list)
 
     def record_step(self, tool_name: str, cost_usd: float = 0.0) -> None:

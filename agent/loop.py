@@ -20,6 +20,8 @@ What the loop learns from tool results (the RunState flags):
 - any write denied by the human (edit_file or create_issue) -> approval_denied.
 - create_issue ok, purpose handoff -> issue_filed (after no_fixed_version, exactly one issue call is allowed).
 - create_issue ok, purpose tracking (GitHub mode) -> tracking_issue = its number; the run goes on.
+- run_scan ok -> every finding id is added to found_vulns (open_pr titles the PR with them).
+- open_pr ok -> pr_number; pr_opened only if the PR was created in this run.
 
 The loop hands its RunState to the tools as ctx.state, so a write tool can check what
 already happened in this run (e.g. open_pr needs green tests and a clean scan).
@@ -103,7 +105,15 @@ def observe(state: RunState, result: ToolResult, flags: dict) -> None:
         vulns = data.get("vulnerabilities") or []
         state.scan_clean = bool(data.get("clean"))
         state.no_fixed_version = bool(vulns) and all(v.get("fixed") is None for v in vulns)
+        for v in vulns:
+            if v.get("id") and v["id"] not in state.found_vulns:
+                state.found_vulns.append(v["id"])
         flags["last_scan"] = data
+
+    elif result.tool == "open_pr" and data is not None:
+        if isinstance(data.get("number"), int):
+            state.pr_number = data["number"]
+            state.pr_opened = bool(data.get("opened"))
 
     elif result.tool == "edit_file":
         if result.ok and data is not None and data.get("changed"):
@@ -152,7 +162,7 @@ def run(
     commit: bool = True,
 ) -> RunResult:
     logger = logger or CallLogger()
-    tools = tool_definitions()
+    tools = tool_definitions(github_mode=ctx.github_mode)
     state = RunState()
     ctx.state = state  # tools read (never write) what happened earlier in this run
     flags: dict = {}

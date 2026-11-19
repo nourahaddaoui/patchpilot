@@ -69,7 +69,8 @@ INPUT_SCHEMA = {
 }
 
 STORE = Path(".git") / "patchpilot-issues"
-FOOTER = "\n\n---\nFiled by PatchPilot (automated dependency remediation) after human approval."
+MARK = "PatchPilot (automated dependency remediation)"  # every issue/PR body PatchPilot writes carries it
+FOOTER = f"\n\n---\nFiled by {MARK} after human approval."
 API = "https://api.github.com"
 _MENTION = re.compile(r"(?<![\w`])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))")
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -139,10 +140,18 @@ def _urllib_http(method: str, url: str, headers: dict, body: dict | None, timeou
         return e.code, payload
 
 
-def _github(ctx: ToolContext, method: str, path: str, body: dict | None = None):
+def github_request(ctx: ToolContext, method: str, path: str, body: dict | None = None,
+                   allow: tuple[int, ...] = (), nothing: str = "Nothing was filed.") -> tuple[int, object]:
+    """One GitHub REST call, shared by every GitHub tool. Returns (status, payload).
+
+    The token is read from $GITHUB_TOKEN at call time and only ever placed in the
+    Authorization header: never in a URL, a git config, a log line or a result.
+    Statuses in `allow` (e.g. 404 = "does not exist yet") are returned, not raised.
+    `nothing` ends every error message so the model knows what did (not) happen.
+    """
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not token:
-        raise ToolError("tool_down", "github mode needs a GITHUB_TOKEN environment variable and none is set. Nothing was filed.")
+        raise ToolError("tool_down", f"github mode needs a GITHUB_TOKEN environment variable and none is set. {nothing}")
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {token}",
@@ -155,14 +164,20 @@ def _github(ctx: ToolContext, method: str, path: str, body: dict | None = None):
     try:
         status, payload = http(method, f"{API}{path}", headers, body, ctx.github_timeout_s)
     except (urllib.error.URLError, TimeoutError, OSError):
-        raise ToolError("tool_down", "GitHub could not be reached. Nothing was filed; you may retry once.") from None
+        raise ToolError("tool_down", f"GitHub could not be reached. {nothing} You may retry once.") from None
+    if status in allow:
+        return status, payload
     if status in (401, 403):
-        raise ToolError("not_allowed", f"GitHub refused the request (HTTP {status}): the token cannot file issues on {ctx.github_repo}. Nothing was filed.")
+        raise ToolError("not_allowed", f"GitHub refused the request (HTTP {status}): the token is not allowed to do this on {ctx.github_repo}. {nothing}")
     if status == 404:
-        raise ToolError("not_found", f"GitHub repo '{ctx.github_repo}' was not found or issues are disabled. Nothing was filed.")
+        raise ToolError("not_found", f"GitHub repo '{ctx.github_repo}' (or the resource asked for) was not found. {nothing}")
     if status >= 400:
-        raise ToolError("tool_down", f"GitHub returned HTTP {status}. Nothing was filed; you may retry once.")
-    return payload
+        raise ToolError("tool_down", f"GitHub returned HTTP {status}. {nothing} You may retry once.")
+    return status, payload
+
+
+def _github(ctx: ToolContext, method: str, path: str, body: dict | None = None):
+    return github_request(ctx, method, path, body)[1]
 
 
 def _github_open_issues(ctx: ToolContext) -> list[dict]:

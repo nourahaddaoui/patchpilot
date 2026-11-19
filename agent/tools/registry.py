@@ -14,7 +14,7 @@ from types import ModuleType
 from typing import Callable
 
 from agent.calllog import MAX_LOGGED_OUTPUT, CallLogger
-from agent.tools import create_issue, edit_file, read_file, run_scan, run_tests
+from agent.tools import create_issue, edit_file, open_pr, read_file, run_scan, run_tests
 from agent.tools.context import ToolContext
 from agent.tools.errors import ToolError
 from agent.tools.schema import validate
@@ -41,8 +41,11 @@ TOOLS: dict[str, Tool] = {
         _from_module(run_tests),
         _from_module(edit_file, writes=True),
         _from_module(create_issue, writes=True),
+        _from_module(open_pr, writes=True),
     )
 }
+# Shown to the model only in GitHub mode; in local mode they would only ever refuse.
+GITHUB_ONLY = {open_pr.NAME}
 
 
 @dataclass(frozen=True)
@@ -54,11 +57,12 @@ class ToolResult:
     duration_ms: float
 
 
-def tool_definitions() -> list[dict]:
-    """Tool specs in the shape the model API expects."""
+def tool_definitions(github_mode: bool = False) -> list[dict]:
+    """Tool specs in the shape the model API expects. GitHub-only tools are listed only in GitHub mode."""
     return [
         {"name": t.name, "description": t.description, "input_schema": t.input_schema}
         for t in TOOLS.values()
+        if github_mode or t.name not in GITHUB_ONLY
     ]
 
 
