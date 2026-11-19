@@ -2,6 +2,13 @@
 
 Runs in the sandbox interpreter (sandbox/.venv), never in the agent's own venv,
 so a bumped pin is what the tests actually exercise.
+
+Safety rule: the target repo's code (its tests, its setup.py, any package pip
+builds) is untrusted and runs on this machine. It gets a scrubbed environment
+(clean_env): no API keys, tokens, passwords or PatchPilot/GitHub credentials,
+so a malicious test cannot read GITHUB_TOKEN and push to the repo. What pip,
+pytest and Trivy need to work (PATH, HOME, proxy and certificate variables,
+PATCHPILOT_TRIVY_CACHE) is kept.
 """
 
 from __future__ import annotations
@@ -27,8 +34,24 @@ TAIL_LINES = 30
 _COUNT = re.compile(r"(\d+) (passed|failed|errors?)\b")
 
 
+SECRET_WORDS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+SECRET_PREFIXES = ("OPENAI_", "GITHUB_", "LANGSMITH_", "PATCHPILOT_ADMIN_")
+
+
+def is_secret(name: str) -> bool:
+    """True for variables the target's code must never see (matched case-insensitively)."""
+    upper = name.upper()
+    return any(w in upper for w in SECRET_WORDS) or upper.startswith(SECRET_PREFIXES)
+
+
+def clean_env(environ: dict | None = None) -> dict:
+    """A copy of the environment without secrets, for every subprocess that runs on the target repo."""
+    source = os.environ if environ is None else environ
+    return {k: v for k, v in source.items() if not is_secret(k)}
+
+
 def _env() -> dict:
-    env = dict(os.environ)
+    env = clean_env()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     return env
