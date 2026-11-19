@@ -12,7 +12,7 @@ def test_local_mode_shows_five_tools_all_writes_strict():
         assert d["input_schema"]["type"] == "object"
         assert d["input_schema"]["additionalProperties"] is False
         assert d["description"]
-    assert [t.name for t in TOOLS.values() if t.writes] == ["edit_file", "create_issue", "open_pr"]
+    assert [t.name for t in TOOLS.values() if t.writes] == ["edit_file", "create_issue", "open_pr", "merge_pr"]
 
 
 def test_every_call_is_logged_with_input_output_time(ctx, tmp_path):

@@ -38,6 +38,9 @@ class ToolContext:
     issue_mode: str = field(default_factory=lambda: os.environ.get("PATCHPILOT_ISSUES", "local"))
     github_repo: Optional[str] = field(default_factory=lambda: os.environ.get("PATCHPILOT_GITHUB_REPO") or None)
     github_timeout_s: int = 20
+    # merge_pr: how long to wait for GitHub Actions on the PR, and how often to look.
+    ci_timeout_s: int = 180
+    ci_poll_s: int = 10
     # HTTP transport for create_issue (tests inject a fake): (method, url, headers, body, timeout) -> (status, json)
     http: Optional[Callable] = None
     # Permanent copy of every filed issue (survives sandbox resets). The CLI sets logs/issues.

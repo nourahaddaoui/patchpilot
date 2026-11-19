@@ -168,6 +168,26 @@ def render_pr(proposal: dict) -> str:
     ])
 
 
+def render_merge(proposal: dict) -> str:
+    """What the human sees before a merge: which PR, what CI said, and exactly what lands on the base branch."""
+    lines = [
+        "",
+        "=" * 72,
+        f" PatchPilot wants to squash-merge PR #{clean(proposal.get('number'))} on GitHub repo {clean(proposal.get('repo'))}",
+        f" {clean(proposal.get('head'))} @ {clean(proposal.get('head_sha'))[:12]} -> {clean(proposal.get('base'))}",
+        "=" * 72,
+        "",
+        f"Title: {clean(proposal.get('title'), 200)}",
+        f"URL:   {clean(proposal.get('url'), 200)}",
+        "",
+        "--- CI on this commit " + "-" * 50,
+    ]
+    for r in proposal.get("ci") or []:
+        lines.append(f"  {clean(r.get('name'), 60):<40} {clean(r.get('status'))}/{clean(r.get('conclusion'))}")
+    lines += ["", "Only this commit is merged (pinned by sha); the tracking issue closes if the PR says 'Fixes #N'.", ""]
+    return "\n".join(lines)
+
+
 def clean_block(text: str) -> str:
     return "\n".join(_CONTROL.sub("", line) for line in (text or "").splitlines())
 
@@ -214,6 +234,9 @@ class Checkpoint:
         if proposal.get("tool") == "open_pr":
             return self._github_write(proposal, render_pr(proposal), "Open this pull request? [y/n] ",
                                       ("tool", "repo", "base", "head", "title", "fixes_issue", "diff"))
+        if proposal.get("tool") == "merge_pr":
+            return self._github_write(proposal, render_merge(proposal), "Merge this pull request? [y/n] ",
+                                      ("tool", "repo", "number", "head_sha", "method", "ci"))
         before = scan_text(self.ctx)
         after = scan_text(self.ctx, proposal["new_text"]) if "new_text" in proposal else {
             "error": "proposal has no file contents to preview"}
