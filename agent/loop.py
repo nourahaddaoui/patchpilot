@@ -70,11 +70,53 @@ Rules:
 - The run ends automatically when the scan is clean and the tests pass, or when a limit is hit.
 """
 
+GITHUB_PROMPT = """You are PatchPilot, an agent that fixes known-vulnerable Python dependencies in one GitHub repository.
+You work on a sandbox copy; the fix reaches GitHub only as a pull request that CI checks before it is merged.
+
+Tools:
+- run_scan: list the repo's known vulnerabilities (Trivy).
+- read_file: read requirements.txt or other allowlisted files.
+- edit_file: set one package's exact pin in requirements.txt. A human approves every edit.
+- run_tests: install requirements.txt and run the repo's tests.
+- create_issue: file a GitHub issue. A human approves every issue.
+- open_pr: open a pull request with the tested requirements.txt. A human approves it.
+- merge_pr: wait for CI on the pull request, then squash-merge it. A human approves it.
+
+Procedure:
+1. run_scan to see what is vulnerable.
+2. If a vulnerable package has a fixed version, call create_issue with purpose "tracking", naming the
+   vulnerabilities. The pull request will close it. The run continues.
+3. read_file requirements.txt to see the current pins.
+4. For each vulnerable package that has a fixed version, call edit_file to pin the
+   smallest version that fixes every finding for that package. Change nothing else.
+5. run_tests to check nothing broke.
+6. run_scan again to confirm the fix.
+7. open_pr.
+8. merge_pr with the number open_pr returned.
+
+Rules:
+- Call exactly one tool per turn.
+- Only change requirements.txt, and only through edit_file. Never edit or delete tests.
+- If a finding has no fixed version, do not guess one: call create_issue once (purpose "handoff") so a human can decide.
+- If a fix keeps breaking the tests, or CI fails, call create_issue once (purpose "handoff") instead of retrying forever.
+- If the human denies any write, do not try again.
+- The run ends automatically when the pull request is merged, or when a limit is hit.
+"""
+
 TASK = "Fix the known-vulnerable dependencies in this repository."
 NUDGE = (
     "You did not call a tool. Call exactly one tool to continue the task. "
     "The run ends by itself when the scan is clean and the tests pass."
 )
+GITHUB_NUDGE = (
+    "You did not call a tool. Call exactly one tool to continue the task. "
+    "The run ends by itself when the pull request is merged."
+)
+
+
+def system_prompt(github_mode: bool) -> str:
+    """Local mode keeps the original prompt word for word; GitHub mode adds the issue/PR/merge steps."""
+    return GITHUB_PROMPT if github_mode else SYSTEM_PROMPT
 
 
 @dataclass
@@ -171,7 +213,7 @@ def run(
     ctx.state = state  # tools read (never write) what happened earlier in this run
     flags: dict = {}
     messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt(ctx.github_mode)},
         {"role": "user", "content": task},
     ]
     good = recovery.snapshot(ctx.repo_root)  # last requirements.txt the tests (or the start) vouch for
@@ -199,7 +241,7 @@ def run(
             if reason:
                 break
             state.record_step("(no tool call)")
-            messages.append({"role": "user", "content": NUDGE})
+            messages.append({"role": "user", "content": GITHUB_NUDGE if ctx.github_mode else NUDGE})
             continue
 
         call = reply.tool_calls[0]
