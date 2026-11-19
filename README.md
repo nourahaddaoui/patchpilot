@@ -44,6 +44,8 @@ The Trivy DB is about 1.6 GB unpacked. To keep it on another disk, set `PATCHPIL
 | Tests fail right after an edit | `requirements.txt` goes back to the last version the tests passed on; the model is told and can try another version or file an issue. |
 | Run ends early (limit, denial) with an untested edit | The edit is reverted; edits the tests already passed on stay. |
 
+**Secrets never reach the target's code.** `run_tests` (pip and pytest) and `run_scan` (Trivy) run with a scrubbed environment: every variable whose name contains `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, and every `OPENAI_*`, `GITHUB_*`, `LANGSMITH_*` and `PATCHPILOT_ADMIN_*` variable, is removed. `PATH`, `HOME`, proxy and certificate variables and `PATCHPILOT_TRIVY_CACHE` are kept (`tests/test_env_scrub.py`).
+
 ## Test
 
 ```bash
@@ -58,7 +60,7 @@ python -m agent.tools run_scan '{}'
 python -m agent.tools run_tests '{}'
 ```
 
-`edit_file` and `create_issue` are not callable this way: they need a human approver, which `python -m agent` provides.
+`edit_file`, `create_issue`, `open_pr` and `merge_pr` are not callable this way: they need a human approver, which `python -m agent` provides.
 
 ## Filing issues (`create_issue`)
 
@@ -68,6 +70,43 @@ The agent can hand a problem to a human: a vulnerability with no fixed version, 
 |---|---|---|
 | `local` (default) | nothing | `logs/issues/<time>-NNNN.json` (git-ignored, survives sandbox resets) |
 | `github` | `PATCHPILOT_ISSUES=github`, `PATCHPILOT_GITHUB_REPO=owner/name`, `GITHUB_TOKEN` | A real issue on that repo. Use a test repo. The token is never logged. |
+
+An issue has a `purpose`: `handoff` (the default: a human takes over and the run stops) or `tracking` (GitHub mode only: the issue the fix PR will close; the run goes on). A run has at most one of each.
+
+## GitHub mode
+
+In GitHub mode the fix does not stop at the sandbox: it goes to the repo as a pull request, GitHub's CI checks it, and PatchPilot merges it. Every write waits for your `y`.
+
+```
+run_scan -> create_issue (tracking) -> read_file -> edit_file -> run_tests -> run_scan
+         -> open_pr ("Fixes #N") -> CI runs on GitHub -> merge_pr -> GitHub closes the issue
+```
+
+That is 8 tool calls; the 12-step cap still applies. The run ends `done` only once the PR is merged. The local-mode flow is unchanged.
+
+| Variable (in `.env`) | Value |
+|---|---|
+| `PATCHPILOT_ISSUES` | `github` |
+| `PATCHPILOT_GITHUB_REPO` | `owner/name` of a test repo (ours: a demo repo whose `main` is protected: PR required, status check `test` required, no force push) |
+| `GITHUB_TOKEN` | Fine-grained token for that repo only: **Actions** read; **Contents**, **Issues**, **Pull requests** read and write. No Administration. |
+
+Run it with the template on the demo repo: `python run.py --target https://github.com/OWNER/REPO`.
+
+What the two GitHub write tools guarantee:
+
+- `open_pr` refuses unless the tests are green and the last scan is clean in this run, and refuses if `requirements.txt` on the remote `main` differs from the sandbox baseline (drift). It uses the REST API only (no `git push`, so the token is never in a git config or URL), creates or moves branch `patchpilot/fix` to `main`, commits only `requirements.txt`, and opens the PR. `Fixes #N` is added only when this run opened a tracking issue. An already open fix PR is returned instead of a second one.
+- `merge_pr` merges only the PR `open_pr` opened in this run, from `patchpilot/fix`. It waits for GitHub Actions on the PR's head commit (every 10 s, at most 180 s), refuses if CI fails or does not finish, and squash-merges pinned to the commit CI tested. An already merged PR is reported, not merged again.
+
+### Resetting the demo repo (admin only)
+
+```bash
+python scripts/reset_demo_repo.py --dry-run   # show what it would do
+python scripts/reset_demo_repo.py
+```
+
+It closes open issues and PRs that carry the PatchPilot footer, deletes `patchpilot/fix`, then saves `main`'s branch protection, removes it, force-updates `main` to the `baseline` tag and restores the exact same protection in a `finally` block (and checks it reads back the same), so protection comes back even if the reset fails.
+
+It needs `PATCHPILOT_ADMIN_TOKEN` (fine-grained, demo repo only, with Administration) in **`.env.admin`**, which is git-ignored and read only by this script. **Why a separate token:** a force-push to protected `main` needs Administration rights. If the agent's token had them, a confused or prompt-injected run could remove the protection the whole flow relies on. The agent never loads `.env.admin`, and its subprocesses get a scrubbed environment anyway.
 
 ## Layout
 
@@ -82,6 +121,8 @@ The agent can hand a problem to a human: a vulnerability with no fixed version, 
 | `agent/calllog.py` | JSONL call log: input, output, ok, duration per call | 2 |
 | `agent/tools/edit_file.py` | Write tool: one pin in `requirements.txt`, idempotent, no downgrades, sandbox only, approval before write | 3 |
 | `agent/tools/create_issue.py` | Write tool: hand a problem to a human as an issue (local file or GitHub), idempotent by title, approval before filing | 5 |
+| `agent/tools/open_pr.py`, `agent/tools/merge_pr.py` | GitHub mode write tools: open the fix PR (REST only, drift check), merge it after CI passes | Phase 1 |
+| `scripts/reset_demo_repo.py` | Admin only: reset the demo repo to its `baseline` tag, protection restored | Phase 1 |
 | `sandbox/reset.sh`, `agent/sandbox.py` | Rebuild `sandbox/work` from the template (or a scenario variant), baseline commit, branch `patchpilot/fix` | 3 |
 | `agent/loop.py` | ReAct loop: one tool call per step, stop rule checked before every model call and every tool call | 4 |
 | `agent/model.py` | `Model` interface, OpenAI implementation (cost per call from token usage), `ScriptedModel` stub for tests | 4 |
@@ -101,8 +142,8 @@ The run ends on the **first** of these, in priority order:
 
 1. Approval denied
 2. No fixed version exists
-3. Done — scan clean **and** tests green
-4. Handed off — the agent filed an issue for a human
+3. Done — scan clean **and** tests green (GitHub mode: **and** the fix PR merged)
+4. Handed off — the agent filed a handoff issue for a human (a tracking issue does not end the run)
 5. 3 failed fix attempts
 6. Cost cap — $0.50
 7. Step limit — 12 steps
