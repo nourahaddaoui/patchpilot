@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,10 @@ def offline(monkeypatch):
     monkeypatch.setattr(model, "load_dotenv", lambda *a, **k: None)
     for name in LIVE_VARS:
         monkeypatch.delenv(name, raising=False)
+    for name in [k for k in os.environ if k.startswith(("LANGSMITH_", "LANGCHAIN_"))]:
+        monkeypatch.delenv(name)  # no key, no endpoint, no project: tests can never send a trace
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
     monkeypatch.setattr(create_issue, "_urllib_http", _no_network)
 
 

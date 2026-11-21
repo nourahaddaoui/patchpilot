@@ -35,6 +35,7 @@ from agent.calllog import CallLogger
 from agent.tools import run_scan
 from agent.tools.context import ToolContext
 from agent.tools.errors import ToolError
+from agent.tracing import span
 
 YES = {"y", "yes"}
 NO = {"n", "no"}
@@ -228,6 +229,8 @@ class Checkpoint:
             self.show("Please answer y or n.")
         return False, "<no valid answer>"  # unclear means no
 
+    @span("checkpoint_decision", "chain", inputs=lambda d: {"proposal": d["proposal"]},
+          outputs=lambda approved: {"approved": approved})
     def __call__(self, proposal: dict) -> bool:
         if proposal.get("tool") == "create_issue":
             return self._issue(proposal)

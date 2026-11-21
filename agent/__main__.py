@@ -30,6 +30,7 @@ from agent.model import OpenAIModel, load_dotenv
 from agent.rules_model import RulesModel
 from agent.stop_rule import Limits, StopReason
 from agent.tools.context import PROJECT_ROOT, ToolContext
+from agent.tracing import enabled as tracing_enabled, run_traced
 
 ISSUE_ARCHIVE = PROJECT_ROOT / "logs" / "issues"
 ENGINES = {"loop": run, "graph": run_graph}  # same steps, same stop rule, same RunResult
@@ -103,7 +104,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"PatchPilot run {logger.run_id} on {ctx.repo_root} with {model.name} on the {engine} engine "
           f"(max {limits.max_steps} steps, ${limits.max_cost_usd:.2f}, {limits.max_failed_fixes} failed fixes)")
 
-    result = ENGINES[engine](model, ctx, limits, logger)
+    if tracing_enabled():
+        print("LangSmith tracing is on: prompts, tool inputs/outputs and repo file contents are sent (secrets redacted).")
+    result = run_traced(engine, ENGINES[engine], model, ctx, limits, logger, target=ns.target or "sandbox/template")
 
     print(f"\nStop reason: {result.stop_reason.value}")
     print(f"Steps: {result.state.steps}   cost: ${result.state.cost_usd:.4f}   failed fixes: {result.state.failed_fixes}")

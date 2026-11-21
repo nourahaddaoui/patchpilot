@@ -18,6 +18,7 @@ from agent.tools import create_issue, edit_file, merge_pr, open_pr, read_file, r
 from agent.tools.context import ToolContext
 from agent.tools.errors import ToolError
 from agent.tools.schema import validate
+from agent.tracing import span
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,9 @@ def _execute(name: str, args, ctx: ToolContext) -> tuple[bool, str, str | None]:
         )
 
 
+@span("tool_call", "tool",
+      inputs=lambda d: {"tool": d["name"], "args": d["args"], "step": d.get("step")},
+      outputs=lambda r: {"ok": r.ok, "content": r.content, "error_type": r.error_type, "duration_ms": r.duration_ms})
 def call_tool(
     name: str,
     args,
