@@ -5,7 +5,7 @@
     python -m agent --target C:/code/my-repo          # a local repo (its committed files)
     python -m agent --model gpt-4o-mini               # GPT through LangChain (paid, capped)
     python -m agent --model openai-raw:gpt-4o-mini    # GPT through the plain openai SDK (for comparison)
-    python -m agent --engine loop                     # the hand-written loop instead of the LangGraph engine
+    python -m agent --engine loop                     # the hand-written loop (baseline) instead of LangGraph
     python -m agent --no-reset                        # run on the existing sandbox/work
     python -m agent --repo PATH                       # run on another sandbox made by sandbox/reset.sh
 
@@ -33,7 +33,7 @@ from agent.tools.context import PROJECT_ROOT, ToolContext
 
 ISSUE_ARCHIVE = PROJECT_ROOT / "logs" / "issues"
 ENGINES = {"loop": run, "graph": run_graph}  # same steps, same stop rule, same RunResult
-DEFAULT_ENGINE = "loop"
+DEFAULT_ENGINE = "graph"  # parity with the loop engine: tests/test_parity.py
 RAW_PREFIX = "openai-raw:"
 
 
