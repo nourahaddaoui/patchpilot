@@ -47,7 +47,7 @@ from agent.model import Model, ModelReply, ToolCall
 from agent.stop_rule import ISSUE_TOOL, Limits, RunState, StopReason, check
 from agent.tools.context import ToolContext
 from agent.tools.registry import ToolResult, tool_definitions
-from agent.tracing import span
+from agent.tracing import model_metadata, model_run_type, span
 
 SYSTEM_PROMPT = """You are PatchPilot, an agent that fixes known-vulnerable Python dependencies in one repository.
 
@@ -258,12 +258,15 @@ def gate_model(s: Session) -> StopReason | None:
 
 def _reply_view(reply: ModelReply) -> dict:
     return {"text": reply.text, "tool_calls": [{"name": c.name, "arguments": c.arguments} for c in reply.tool_calls],
-            "input_tokens": reply.input_tokens, "output_tokens": reply.output_tokens, "cost_usd": reply.cost_usd}
+            "cost_usd": reply.cost_usd,
+            "usage_metadata": {"input_tokens": reply.input_tokens, "output_tokens": reply.output_tokens,
+                               "total_tokens": reply.input_tokens + reply.output_tokens}}
 
 
-@span("model_call", "llm",
+@span("model_call", lambda d: model_run_type(d["s"].model),
       inputs=lambda d: {"model": d["s"].model.name, "step": d["s"].state.steps + 1, "messages": d["s"].messages},
-      outputs=_reply_view)
+      outputs=_reply_view,
+      metadata=lambda d: model_metadata(d["s"].model))
 def model_turn(s: Session) -> ModelReply:
     reply = s.model.complete(s.messages, s.tools)
     s.state.cost_usd += reply.cost_usd

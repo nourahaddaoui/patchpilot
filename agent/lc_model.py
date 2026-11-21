@@ -83,6 +83,8 @@ def _chat_openai(name: str):
 
 class LangChainModel:
     """Model interface over any LangChain chat model. Default: ChatOpenAI(model=name)."""
+    provider = "openai"  # LangSmith ls_provider: real LLM calls are run_type "llm"
+
 
     def __init__(self, model: str | None = None, chat=None):
         load_dotenv()

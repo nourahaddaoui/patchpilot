@@ -101,6 +101,8 @@ def price_for(model: str) -> tuple[float, float]:
 
 
 class OpenAIModel:
+    provider = "openai"  # LangSmith ls_provider: real LLM calls are run_type "llm"
+
     def __init__(self, model: str | None = None, client=None):
         load_dotenv()
         self.name = model or os.environ.get("PATCHPILOT_MODEL", DEFAULT_MODEL)
