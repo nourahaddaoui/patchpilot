@@ -1,5 +1,9 @@
 """The ReAct loop: plan, call a tool, read the result, decide, stop.
 
+The per-turn steps (start, gate_model, model_turn, gate_no_tool, nudge, gate_tool,
+tool_turn, finish) are shared with the LangGraph engine (agent/graph.py): both
+engines run the same stop-rule checks, recovery and logging; only the driver differs.
+
 One agent, one tool call per step. The stop rule (agent/stop_rule.py) is checked
 before every model call and again before every tool call. Once it returns a
 reason, nothing else runs.
@@ -39,7 +43,7 @@ from dataclasses import dataclass, field
 
 from agent import recovery, sandbox
 from agent.calllog import CallLogger
-from agent.model import Model, ModelReply
+from agent.model import Model, ModelReply, ToolCall
 from agent.stop_rule import ISSUE_TOOL, Limits, RunState, StopReason, check
 from agent.tools.context import ToolContext
 from agent.tools.registry import ToolResult, tool_definitions
@@ -199,6 +203,122 @@ def _assistant_message(reply: ModelReply) -> dict:
     return msg
 
 
+# --- the per-turn steps, shared by both engines --------------------------------------
+#
+# run() below (the loop engine) and agent/graph.py (the LangGraph engine) only decide the
+# ORDER of these calls. Every safety decision lives in exactly one of them:
+#   gate_model    - check() before every model call (best case: the one allowed issue)
+#   model_turn    - the model call, its cost, the "model" log record
+#   gate_no_tool  - check() when the model called no tool
+#   nudge         - a turn without a tool call still counts as a step
+#   gate_tool     - check() before every tool call, with the tool about to run
+#   tool_turn     - the call (retry once if transient), observe(), rollback after red tests
+#   finish        - cleanup of untested edits, the commit on DONE, the "stop" record
+
+
+@dataclass
+class Session:
+    """Everything one run needs. Both engines drive the same Session through the same steps."""
+
+    model: Model
+    ctx: ToolContext
+    limits: Limits
+    logger: CallLogger
+    tools: list[dict]
+    state: RunState
+    messages: list[dict]
+    flags: dict = field(default_factory=dict)
+    good: str | None = None  # last requirements.txt the tests (or the start) vouch for
+    reply: ModelReply | None = None  # the latest model reply
+
+
+def start(model: Model, ctx: ToolContext, limits: Limits = Limits(),
+          logger: CallLogger | None = None, task: str = TASK) -> Session:
+    logger = logger or CallLogger()
+    state = RunState(github_mode=ctx.github_mode)
+    ctx.state = state  # tools read (never write) what happened earlier in this run
+    s = Session(
+        model=model, ctx=ctx, limits=limits, logger=logger,
+        tools=tool_definitions(github_mode=ctx.github_mode), state=state,
+        messages=[{"role": "system", "content": system_prompt(ctx.github_mode)},
+                  {"role": "user", "content": task}],
+        good=recovery.snapshot(ctx.repo_root),
+    )
+    logger.log({"event": "start", "model": model.name, "repo": str(ctx.repo_root),
+                "limits": {"max_steps": limits.max_steps, "max_cost_usd": limits.max_cost_usd,
+                           "max_failed_fixes": limits.max_failed_fixes}})
+    return s
+
+
+def gate_model(s: Session) -> StopReason | None:
+    """Can the run go on at all? (Best case: the next call is the one allowed issue.)"""
+    return check(s.state, s.limits, next_tool=ISSUE_TOOL)
+
+
+def model_turn(s: Session) -> ModelReply:
+    reply = s.model.complete(s.messages, s.tools)
+    s.state.cost_usd += reply.cost_usd
+    s.logger.log({"event": "model", "step": s.state.steps + 1, "text": reply.text,
+                  "tool_calls": [{"name": c.name, "arguments": c.arguments} for c in reply.tool_calls],
+                  "input_tokens": reply.input_tokens, "output_tokens": reply.output_tokens,
+                  "cost_usd": reply.cost_usd, "total_cost_usd": s.state.cost_usd})
+    s.messages.append(_assistant_message(reply))
+    s.reply = reply
+    return reply
+
+
+def gate_no_tool(s: Session) -> StopReason | None:
+    """The model called no tool: e.g. no fixed version and the model did not file an issue."""
+    return check(s.state, s.limits)
+
+
+def nudge(s: Session) -> None:
+    s.state.record_step("(no tool call)")
+    s.messages.append({"role": "user", "content": GITHUB_NUDGE if s.ctx.github_mode else NUDGE})
+
+
+def gate_tool(s: Session, call: ToolCall) -> StopReason | None:
+    """Cost cap, or a non-issue call after no fix: checked with the tool about to run."""
+    return check(s.state, s.limits, next_tool=call.name)
+
+
+def tool_turn(s: Session, call: ToolCall) -> ToolResult:
+    step = s.state.steps + 1
+    try:
+        args = json.loads(call.arguments) if call.arguments.strip() else {}
+    except json.JSONDecodeError:
+        args = call.arguments  # registry rejects non-objects with a plain-text error
+    result = recovery.call_with_retry(call.name, args, s.ctx, s.logger, step)  # transient failures retried once
+    s.state.record_step(call.name)
+    edited_before = s.flags.get("edited_since_tests", False)
+    observe(s.state, result, s.flags)
+    if call.name == "run_tests" and s.state.tests_green:
+        s.good = recovery.snapshot(s.ctx.repo_root)
+    elif call.name == "run_tests" and edited_before:
+        result = recovery.rollback_after_failed_tests(s.ctx, result, s.good, s.logger, step)  # back to known-good
+        s.flags["edited_since_tests"] = False
+        if s.flags.get("edits"):
+            s.flags["edits"] -= 1
+    s.messages.append({"role": "tool", "tool_call_id": call.id, "content": result.content})
+    return result
+
+
+def finish(s: Session, reason: StopReason, commit: bool = True) -> RunResult:
+    ctx, state, logger = s.ctx, s.state, s.logger
+    reverted = recovery.cleanup_after_run(ctx, reason is StopReason.DONE, s.good, logger)  # no half-applied edits
+    sha = None
+    if reason is StopReason.DONE and commit and s.flags.get("edits") and sandbox.is_sandbox(ctx.repo_root):
+        sha = sandbox.commit_fix(ctx.repo_root, "PatchPilot: bump vulnerable pins in requirements.txt")
+
+    logger.log({"event": "stop", "reason": reason.value, "steps": state.steps,
+                "cost_usd": round(state.cost_usd, 6), "failed_fixes": state.failed_fixes,
+                "scan_clean": state.scan_clean, "tests_green": state.tests_green, "commit": sha,
+                "reverted_uncommitted_edit": reverted})
+    return RunResult(logger.run_id, reason, state, sha, str(logger.path), s.messages)
+
+
+# --- the loop engine ---------------------------------------------------------------------
+
 def run(
     model: Model,
     ctx: ToolContext,
@@ -207,72 +327,21 @@ def run(
     task: str = TASK,
     commit: bool = True,
 ) -> RunResult:
-    logger = logger or CallLogger()
-    tools = tool_definitions(github_mode=ctx.github_mode)
-    state = RunState(github_mode=ctx.github_mode)
-    ctx.state = state  # tools read (never write) what happened earlier in this run
-    flags: dict = {}
-    messages: list[dict] = [
-        {"role": "system", "content": system_prompt(ctx.github_mode)},
-        {"role": "user", "content": task},
-    ]
-    good = recovery.snapshot(ctx.repo_root)  # last requirements.txt the tests (or the start) vouch for
-    logger.log({"event": "start", "model": model.name, "repo": str(ctx.repo_root),
-                "limits": {"max_steps": limits.max_steps, "max_cost_usd": limits.max_cost_usd,
-                           "max_failed_fixes": limits.max_failed_fixes}})
-
+    s = start(model, ctx, limits, logger, task)
     while True:
-        # Can the run go on at all? (Best case: the next call is the one allowed issue.)
-        reason = check(state, limits, next_tool=ISSUE_TOOL)
+        reason = gate_model(s)
         if reason:
             break
-
-        reply = model.complete(messages, tools)
-        state.cost_usd += reply.cost_usd
-        step = state.steps + 1
-        logger.log({"event": "model", "step": step, "text": reply.text,
-                    "tool_calls": [{"name": c.name, "arguments": c.arguments} for c in reply.tool_calls],
-                    "input_tokens": reply.input_tokens, "output_tokens": reply.output_tokens,
-                    "cost_usd": reply.cost_usd, "total_cost_usd": state.cost_usd})
-        messages.append(_assistant_message(reply))
-
+        reply = model_turn(s)
         if not reply.tool_calls:
-            reason = check(state, limits)  # e.g. no fixed version and the model did not file an issue
+            reason = gate_no_tool(s)
             if reason:
                 break
-            state.record_step("(no tool call)")
-            messages.append({"role": "user", "content": GITHUB_NUDGE if ctx.github_mode else NUDGE})
+            nudge(s)
             continue
-
-        call = reply.tool_calls[0]
-        reason = check(state, limits, next_tool=call.name)  # cost cap, or a non-issue call after no fix
+        call = reply.tool_calls[0]  # one tool call per step; extras are never executed
+        reason = gate_tool(s, call)
         if reason:
             break
-
-        try:
-            args = json.loads(call.arguments) if call.arguments.strip() else {}
-        except json.JSONDecodeError:
-            args = call.arguments  # registry rejects non-objects with a plain-text error
-        result = recovery.call_with_retry(call.name, args, ctx, logger, step)  # transient failures retried once
-        state.record_step(call.name)
-        edited_before = flags.get("edited_since_tests", False)
-        observe(state, result, flags)
-        if call.name == "run_tests" and state.tests_green:
-            good = recovery.snapshot(ctx.repo_root)
-        elif call.name == "run_tests" and edited_before:
-            result = recovery.rollback_after_failed_tests(ctx, result, good, logger, step)  # back to known-good
-            flags["edited_since_tests"] = False
-            if flags.get("edits"):
-                flags["edits"] -= 1
-        messages.append({"role": "tool", "tool_call_id": call.id, "content": result.content})
-
-    reverted = recovery.cleanup_after_run(ctx, reason is StopReason.DONE, good, logger)  # no half-applied edits
-    sha = None
-    if reason is StopReason.DONE and commit and flags.get("edits") and sandbox.is_sandbox(ctx.repo_root):
-        sha = sandbox.commit_fix(ctx.repo_root, "PatchPilot: bump vulnerable pins in requirements.txt")
-
-    logger.log({"event": "stop", "reason": reason.value, "steps": state.steps,
-                "cost_usd": round(state.cost_usd, 6), "failed_fixes": state.failed_fixes,
-                "scan_clean": state.scan_clean, "tests_green": state.tests_green, "commit": sha,
-                "reverted_uncommitted_edit": reverted})
-    return RunResult(logger.run_id, reason, state, sha, str(logger.path), messages)
+        tool_turn(s, call)
+    return finish(s, reason, commit)
