@@ -49,3 +49,21 @@ def test_netguard_really_blocks(tmp_path):
     proc = subprocess.run([sys.executable, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True,
                           env={**os.environ, "NETGUARD_LOG": str(record)}, timeout=60)
     assert "api.github.com" in record.read_text(), proc.stdout + proc.stderr
+
+
+def test_no_dotenv_reaches_the_test_process_through_any_importer(tmp_path, monkeypatch):
+    """Every module that imported load_dotenv is switched off by conftest (2026-11-21 follow-up).
+
+    Asserts on booleans only, so a failure can never print a secret.
+    """
+    import agent.__main__ as cli
+    import agent.lc_model as lc
+    import agent.model as model
+    import agent.tools.__main__ as tools_cli
+    fake_env = tmp_path / ".env"
+    fake_env.write_text("OPENAI_API_KEY=sk-should-never-load\nPATCHPILOT_ISSUES=github\n")
+    monkeypatch.setattr(model, "PROJECT_ROOT", tmp_path)  # even if the default moved here, DOTENV_PATH is None
+    for loader in (model.load_dotenv, lc.load_dotenv, cli.load_dotenv, tools_cli.load_dotenv):
+        loader()
+    leaked = any(os.environ.get(k) for k in ("OPENAI_API_KEY", "PATCHPILOT_ISSUES", "GITHUB_TOKEN"))
+    assert not leaked, "a .env value reached os.environ during tests"

@@ -66,9 +66,18 @@ def openai_tools(tool_definitions: list[dict]) -> list[dict]:
     ]
 
 
-def load_dotenv(path: Path = PROJECT_ROOT / ".env") -> None:
-    """Minimal .env reader: KEY=VALUE lines, never overrides the real environment."""
-    if not path.is_file():
+DOTENV_PATH: Path | None = PROJECT_ROOT / ".env"
+
+
+def load_dotenv(path: Path | None = None) -> None:
+    """Minimal .env reader: KEY=VALUE lines, never overrides the real environment.
+
+    The default path is read from DOTENV_PATH at call time (not bound at import), so the
+    test suite can switch .env off for every caller at once, including modules that did
+    `from agent.model import load_dotenv`. DOTENV_PATH = None disables it.
+    """
+    path = path if path is not None else DOTENV_PATH
+    if path is None or not path.is_file():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()

@@ -14,7 +14,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 LIVE_VARS = (
     "PATCHPILOT_ISSUES", "PATCHPILOT_GITHUB_REPO", "GITHUB_TOKEN", "PATCHPILOT_ADMIN_TOKEN",
-    "OPENAI_API_KEY", "PATCHPILOT_MODEL",
+    "OPENAI_API_KEY", "OPENAI_BASE_URL", "PATCHPILOT_MODEL",
 )
 
 
@@ -32,6 +32,7 @@ def offline(monkeypatch):
     from agent import model
     from agent.tools import create_issue
 
+    monkeypatch.setattr(model, "DOTENV_PATH", None)  # every caller, however it imported load_dotenv
     monkeypatch.setattr(model, "load_dotenv", lambda *a, **k: None)
     for name in LIVE_VARS:
         monkeypatch.delenv(name, raising=False)
