@@ -1,4 +1,8 @@
-"""run_scan (read): run Trivy on the sandbox repo and return a compact JSON summary."""
+"""run_scan (read): run Trivy on the sandbox repo and return a compact JSON summary.
+
+Trivy runs with the same scrubbed environment as the tests (run_tests.clean_env):
+it needs no credentials for an offline scan, so none are passed to it.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,7 @@ import subprocess
 from agent.tools._paths import resolve_in_repo
 from agent.tools.context import ToolContext
 from agent.tools.errors import ToolError
+from agent.tools.run_tests import clean_env
 
 NAME = "run_scan"
 DESCRIPTION = (
@@ -74,6 +79,7 @@ def run(args: dict, ctx: ToolContext) -> str:
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             timeout=ctx.scan_timeout_s,
+            env=clean_env(),
         )
     except FileNotFoundError:
         raise ToolError("tool_down", "the scanner (trivy) is not installed or not on PATH. Scanning is unavailable; stop and report it.") from None

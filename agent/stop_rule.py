@@ -7,7 +7,13 @@ A run ends on the FIRST of these conditions, checked in this priority order:
 1. APPROVAL_DENIED   - the human rejected the proposed diff at the checkpoint.
 2. NO_FIXED_VERSION  - the scanner reports no fixed version for the vulnerability.
 3. DONE              - the scan is clean AND the tests are green (both required).
-3b. HANDED_OFF       - the agent filed an issue for a human (create_issue succeeded).
+                       In GitHub mode also MERGED: the fix PR was squash-merged by
+                       merge_pr after CI passed, because a fix that only exists in
+                       the sandbox has not fixed the repository. (Exception: if no
+                       scan in the run ever found a vulnerability, there is nothing
+                       to merge, and clean + green is DONE as in local mode.)
+3b. HANDED_OFF       - the agent filed a handoff issue for a human (create_issue
+                       succeeded). A tracking issue (GitHub mode) does not count.
 4. FIX_ATTEMPTS      - 3 fix attempts have failed.
 5. COST_CAP          - accumulated model cost has reached $0.50.
 6. STEP_LIMIT        - 12 tool-call steps have been taken.
@@ -21,6 +27,10 @@ NO_FIXED_VERSION holds, exactly one create_issue call is still allowed (if no
 issue was filed yet). Every other limit still applies to that call. After that
 issue the reason stays NO_FIXED_VERSION; any other filed issue is HANDED_OFF.
 So a run files at most one issue.
+
+The full GitHub flow is 8 tool calls (scan, tracking issue, read, edit, tests,
+rescan, open_pr, merge_pr), so the 12-step cap still bounds it with room for
+one retry.
 
 Limits are tuned during Week 1 and then frozen.
 """
@@ -60,7 +70,13 @@ class RunState:
     tests_green: bool = False
     approval_denied: bool = False
     no_fixed_version: bool = False
-    issue_filed: bool = False
+    issue_filed: bool = False  # a handoff issue: ends the run
+    tracking_issue: int | None = None  # GitHub mode: the issue the PR will close; does not end the run
+    found_vulns: list[str] = field(default_factory=list)  # every finding id any scan in this run reported
+    pr_number: int | None = None  # GitHub mode: the PR open_pr opened (or found) in this run
+    pr_opened: bool = False  # True only if open_pr created that PR in this run (not an older one)
+    github_mode: bool = False  # set once by the loop from the ToolContext
+    merged: bool = False  # GitHub mode: merge_pr merged the fix PR
     history: list[dict] = field(default_factory=list)
 
     def record_step(self, tool_name: str, cost_usd: float = 0.0) -> None:
@@ -70,6 +86,12 @@ class RunState:
         self.history.append(
             {"step": self.steps, "tool": tool_name, "cost_usd": cost_usd}
         )
+
+
+def _delivered(state: RunState) -> bool:
+    """Local mode: the sandbox fix is the deliverable. GitHub mode: the merged PR is
+    (unless the repo was clean all along and there was nothing to merge)."""
+    return not state.github_mode or state.merged or not state.found_vulns
 
 
 def check(
@@ -83,7 +105,7 @@ def check(
         return StopReason.APPROVAL_DENIED
     if state.no_fixed_version and not (next_tool == ISSUE_TOOL and not state.issue_filed):
         return StopReason.NO_FIXED_VERSION
-    if state.scan_clean and state.tests_green:
+    if state.scan_clean and state.tests_green and _delivered(state):
         return StopReason.DONE
     if state.issue_filed:
         return StopReason.HANDED_OFF

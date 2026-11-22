@@ -6,7 +6,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _VENV_BIN = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
@@ -38,10 +38,21 @@ class ToolContext:
     issue_mode: str = field(default_factory=lambda: os.environ.get("PATCHPILOT_ISSUES", "local"))
     github_repo: Optional[str] = field(default_factory=lambda: os.environ.get("PATCHPILOT_GITHUB_REPO") or None)
     github_timeout_s: int = 20
+    # merge_pr: how long to wait for GitHub Actions on the PR, and how often to look.
+    ci_timeout_s: int = 180
+    ci_poll_s: int = 10
     # HTTP transport for create_issue (tests inject a fake): (method, url, headers, body, timeout) -> (status, json)
     http: Optional[Callable] = None
     # Permanent copy of every filed issue (survives sandbox resets). The CLI sets logs/issues.
     issue_archive: Optional[Path] = None
+    # The loop's RunState (agent/stop_rule.py), set by loop.run(). Tools that depend on what
+    # happened earlier in THIS run (tracking issue, tests green, scan clean, PR opened) read it.
+    # None outside a loop run, so those tools refuse instead of guessing.
+    state: Optional[Any] = None
+
+    @property
+    def github_mode(self) -> bool:
+        return self.issue_mode == "github"
 
     def __post_init__(self) -> None:
         self.repo_root = Path(self.repo_root).resolve()

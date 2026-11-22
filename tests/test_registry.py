@@ -5,14 +5,14 @@ from agent.tools import registry
 from agent.tools.registry import TOOLS, call_tool, tool_definitions
 
 
-def test_five_tools_two_write_all_strict():
+def test_local_mode_shows_five_tools_all_writes_strict():
     defs = tool_definitions()
     assert [d["name"] for d in defs] == ["run_scan", "read_file", "run_tests", "edit_file", "create_issue"]
-    for d in defs:
+    for d in tool_definitions(github_mode=True):
         assert d["input_schema"]["type"] == "object"
         assert d["input_schema"]["additionalProperties"] is False
         assert d["description"]
-    assert [t.name for t in TOOLS.values() if t.writes] == ["edit_file", "create_issue"]
+    assert [t.name for t in TOOLS.values() if t.writes] == ["edit_file", "create_issue", "open_pr", "merge_pr"]
 
 
 def test_every_call_is_logged_with_input_output_time(ctx, tmp_path):

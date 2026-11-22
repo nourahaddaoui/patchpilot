@@ -23,7 +23,8 @@ That fixes the template repo with the free rule-based model: no API key, no cost
 | `python run.py` | Template repo, free `rules` model |
 | `python run.py --target https://github.com/OWNER/REPO` | A real repo: cloned into the sandbox, fixed there |
 | `python run.py --target C:/code/my-repo` | A local repo (its committed files only) |
-| `python run.py --model gpt-4o-mini` | GPT chooses the tools; needs `OPENAI_API_KEY` in `.env`; cost counted against the $0.50 cap |
+| `python run.py --model gpt-4o-mini` | GPT chooses the tools (through LangChain); needs `OPENAI_API_KEY` in `.env`; cost counted against the $0.50 cap |
+| `python run.py --engine loop` | The hand-written loop instead of the LangGraph engine (same steps, same stop rule) |
 | `python run.py --no-reset` | Run again on the existing `sandbox/work` |
 
 **Real repos are never edited in place.** A target is cloned into `sandbox/sources/<name>`, copied into the throwaway `sandbox/work`, and fixed there; its tests run in their own interpreter (`sandbox/.venvs/<name>`). A fix that ends `done` is committed on branch `patchpilot/fix` inside `sandbox/work` (the run prints `git -C sandbox/work show <sha>`); pushing it to the real repo is up to you. Only a root `requirements.txt` with `==` pins can be edited; findings elsewhere (other lockfiles) end in an issue for a human. A repo with no tests can never reach `done`, because the fix cannot be verified.
@@ -32,9 +33,85 @@ That fixes the template repo with the free rule-based model: no API key, no cost
 
 Each run prints its stop reason, step count and cost, and writes its trajectory to `logs/<run_id>.jsonl`: a `start` record, one `model` record per turn (tokens, cost), one record per tool call (input, output, time), `checkpoint` and `recovery` events, and a final `stop` record with the named stop reason.
 
-GPT models: prices live in `agent/model.py`; a model without a known price is refused, because the cost cap would never fire. `PATCHPILOT_MODEL` sets the default model.
+GPT models: prices live in `agent/model.py`; a model without a known price is refused, because the cost cap would never fire. `PATCHPILOT_MODEL` sets the default model. See [Engines and models](#engines-and-models) for the engine choice, local models and the plain-SDK path.
 
 The Trivy DB is about 1.6 GB unpacked. To keep it on another disk, set `PATCHPILOT_TRIVY_CACHE` (in your environment or `.env`) before `python scripts/setup.py`.
+
+## Engines and models
+
+PatchPilot uses LangChain to talk to the LLM, LangGraph to run the agent, and LangSmith to trace runs. The parts that make it safe stay our own code and are shared by both engines: the tools and their strict schemas, the stop rule, the human checkpoint, recovery and the JSONL logs.
+
+| `--engine` | What drives the run |
+|---|---|
+| `graph` (default) | A LangGraph `StateGraph` (`agent/graph.py`). Its conditional edges call our stop rule. |
+| `loop` | The original hand-written loop (`agent/loop.py`), kept as the baseline. |
+
+Both engines run the same step functions from `agent/loop.py`: the stop-rule check before every model call and before every tool call, the model call and its cost, the tool call with one retry, rollback after red tests, and the JSONL records. `tests/test_parity.py` runs 8 scenarios on both engines and requires the same stop reason, the same tool calls and identical trajectories. A model that never finishes stops at exactly 12 steps on both. LangGraph's `recursion_limit` is only a backstop above that. `PATCHPILOT_ENGINE` sets the default engine.
+
+| `--model` | Model class | Cost |
+|---|---|---|
+| `rules` (default) | `RulesModel`: free, deterministic, no LLM | $0 |
+| `gpt-4o-mini` (or any model name) | `LangChainModel`: `ChatOpenAI(...).bind_tools(...)`, one tool call per turn | From token usage, counted against the cap |
+| `openai-raw:gpt-4o-mini` | `OpenAIModel`: the plain `openai` SDK, kept for comparison | Same |
+
+A model without a known price is refused. Set `PATCHPILOT_PRICE_IN` and `PATCHPILOT_PRICE_OUT` (USD per 1M tokens) for any model not in `agent/model.py`.
+
+**A local model (Ollama), free:** point the OpenAI-compatible client at Ollama and set the price to 0. No OpenAI key is needed; a placeholder is sent to the local server.
+
+```bash
+ollama pull llama3.1
+OPENAI_BASE_URL=http://localhost:11434/v1 PATCHPILOT_PRICE_IN=0 PATCHPILOT_PRICE_OUT=0 \
+  python run.py --model llama3.1
+```
+
+The model must support tool calling. Small local models often call tools badly; the registry rejects bad arguments in plain text, and the stop rule still ends the run.
+
+The graph (`docs/graph.md`, kept current by a test). Dotted edges are conditional: each one calls our stop rule, and any stop reason routes to `finish`.
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	model(model)
+	nudge(nudge)
+	tools(tools)
+	finish(finish)
+	__end__([<p>__end__</p>]):::last
+	__start__ -.-> finish;
+	__start__ -.-> model;
+	model -.-> finish;
+	model -.-> nudge;
+	model -.-> tools;
+	nudge -.-> finish;
+	nudge -.-> model;
+	tools -.-> finish;
+	tools -.-> model;
+	finish --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+```
+
+## Tracing with LangSmith
+
+Tracing is **off** unless both of these are set (in your environment or `.env`):
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=...          # never logged; LANGSMITH_PROJECT and LANGSMITH_ENDPOINT are optional
+```
+
+Each run is then one trace (`patchpilot_run`) with metadata `run_id`, `engine`, `model`, `target` and `stop_reason`. It contains a span per model call, per tool call and per checkpoint decision, and on the graph engine LangGraph's node runs too.
+
+**What is sent to LangSmith:** the prompts and model replies, tool inputs and outputs (scan results and **the contents of repo files the agent reads**, such as `requirements.txt`), the checkpoint proposals (diffs, issue and PR text) with your yes/no, and the run metadata.
+
+**What is never sent:** the tool context, environment variables, or tokens. Everything passes through `redact()` before it leaves the machine, in the LangSmith client itself, so LangGraph's and LangChain's own runs are covered too. It replaces the value of every secret variable (names containing KEY, TOKEN, SECRET or PASSWORD, and `OPENAI_*`, `GITHUB_*`, `LANGSMITH_*`, `PATCHPILOT_ADMIN_*`), GitHub and OpenAI token patterns, `Bearer` headers and credentials in URLs. Only trace repos whose files you are allowed to send to LangSmith.
+
+The test suite can never send a trace: it removes every `LANGSMITH_*`/`LANGCHAIN_*` variable and forces tracing off, and the tracing tests inspect what the client would send on a recording session (`tests/test_tracing.py`).
 
 ## Recovery
 
@@ -43,6 +120,8 @@ The Trivy DB is about 1.6 GB unpacked. To keep it on another disk, set `PATCHPIL
 | Scanner or test run times out, or returns garbled output | Retried once automatically (logged as a `recovery` retry). Write tools are never retried. |
 | Tests fail right after an edit | `requirements.txt` goes back to the last version the tests passed on; the model is told and can try another version or file an issue. |
 | Run ends early (limit, denial) with an untested edit | The edit is reverted; edits the tests already passed on stay. |
+
+**Secrets never reach the target's code.** `run_tests` (pip and pytest) and `run_scan` (Trivy) run with a scrubbed environment: every variable whose name contains `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, and every `OPENAI_*`, `GITHUB_*`, `LANGSMITH_*` and `PATCHPILOT_ADMIN_*` variable, is removed. `PATH`, `HOME`, proxy and certificate variables and `PATCHPILOT_TRIVY_CACHE` are kept (`tests/test_env_scrub.py`).
 
 ## Test
 
@@ -58,7 +137,7 @@ python -m agent.tools run_scan '{}'
 python -m agent.tools run_tests '{}'
 ```
 
-`edit_file` and `create_issue` are not callable this way: they need a human approver, which `python -m agent` provides.
+`edit_file`, `create_issue`, `open_pr` and `merge_pr` are not callable this way: they need a human approver, which `python -m agent` provides.
 
 ## Filing issues (`create_issue`)
 
@@ -68,6 +147,43 @@ The agent can hand a problem to a human: a vulnerability with no fixed version, 
 |---|---|---|
 | `local` (default) | nothing | `logs/issues/<time>-NNNN.json` (git-ignored, survives sandbox resets) |
 | `github` | `PATCHPILOT_ISSUES=github`, `PATCHPILOT_GITHUB_REPO=owner/name`, `GITHUB_TOKEN` | A real issue on that repo. Use a test repo. The token is never logged. |
+
+An issue has a `purpose`: `handoff` (the default: a human takes over and the run stops) or `tracking` (GitHub mode only: the issue the fix PR will close; the run goes on). A run has at most one of each.
+
+## GitHub mode
+
+In GitHub mode the fix does not stop at the sandbox: it goes to the repo as a pull request, GitHub's CI checks it, and PatchPilot merges it. Every write waits for your `y`.
+
+```
+run_scan -> create_issue (tracking) -> read_file -> edit_file -> run_tests -> run_scan
+         -> open_pr ("Fixes #N") -> CI runs on GitHub -> merge_pr -> GitHub closes the issue
+```
+
+That is 8 tool calls; the 12-step cap still applies. The run ends `done` only once the PR is merged. The local-mode flow is unchanged.
+
+| Variable (in `.env`) | Value |
+|---|---|
+| `PATCHPILOT_ISSUES` | `github` |
+| `PATCHPILOT_GITHUB_REPO` | `owner/name` of a test repo (ours: a demo repo whose `main` is protected: PR required, status check `test` required, no force push) |
+| `GITHUB_TOKEN` | Fine-grained token for that repo only: **Actions** read; **Contents**, **Issues**, **Pull requests** read and write. No Administration. |
+
+Run it with the template on the demo repo: `python run.py --target https://github.com/OWNER/REPO`.
+
+What the two GitHub write tools guarantee:
+
+- `open_pr` refuses unless the tests are green and the last scan is clean in this run, and refuses if `requirements.txt` on the remote `main` differs from the sandbox baseline (drift). It uses the REST API only (no `git push`, so the token is never in a git config or URL), creates or moves branch `patchpilot/fix` to `main`, commits only `requirements.txt`, and opens the PR. `Fixes #N` is added only when this run opened a tracking issue. An already open fix PR is returned instead of a second one.
+- `merge_pr` merges only the PR `open_pr` opened in this run, from `patchpilot/fix`. It waits for GitHub Actions on the PR's head commit (every 10 s, at most 180 s), refuses if CI fails or does not finish, and squash-merges pinned to the commit CI tested. An already merged PR is reported, not merged again.
+
+### Resetting the demo repo (admin only)
+
+```bash
+python scripts/reset_demo_repo.py --dry-run   # show what it would do
+python scripts/reset_demo_repo.py
+```
+
+It closes open issues and PRs that carry the PatchPilot footer, deletes `patchpilot/fix`, then saves `main`'s branch protection, removes it, force-updates `main` to the `baseline` tag and restores the exact same protection in a `finally` block (and checks it reads back the same), so protection comes back even if the reset fails.
+
+It needs `PATCHPILOT_ADMIN_TOKEN` (fine-grained, demo repo only, with Administration) in **`.env.admin`**, which is git-ignored and read only by this script. **Why a separate token:** a force-push to protected `main` needs Administration rights. If the agent's token had them, a confused or prompt-injected run could remove the protection the whole flow relies on. The agent never loads `.env.admin`, and its subprocesses get a scrubbed environment anyway.
 
 ## Layout
 
@@ -82,9 +198,14 @@ The agent can hand a problem to a human: a vulnerability with no fixed version, 
 | `agent/calllog.py` | JSONL call log: input, output, ok, duration per call | 2 |
 | `agent/tools/edit_file.py` | Write tool: one pin in `requirements.txt`, idempotent, no downgrades, sandbox only, approval before write | 3 |
 | `agent/tools/create_issue.py` | Write tool: hand a problem to a human as an issue (local file or GitHub), idempotent by title, approval before filing | 5 |
+| `agent/tools/open_pr.py`, `agent/tools/merge_pr.py` | GitHub mode write tools: open the fix PR (REST only, drift check), merge it after CI passes | Phase 1 |
+| `scripts/reset_demo_repo.py` | Admin only: reset the demo repo to its `baseline` tag, protection restored | Phase 1 |
 | `sandbox/reset.sh`, `agent/sandbox.py` | Rebuild `sandbox/work` from the template (or a scenario variant), baseline commit, branch `patchpilot/fix` | 3 |
-| `agent/loop.py` | ReAct loop: one tool call per step, stop rule checked before every model call and every tool call | 4 |
+| `agent/loop.py` | ReAct loop and the per-turn steps both engines share: one tool call per step, stop rule checked before every model call and every tool call | 4 |
 | `agent/model.py` | `Model` interface, OpenAI implementation (cost per call from token usage), `ScriptedModel` stub for tests | 4 |
+| `agent/lc_model.py` | `LangChainModel`: ChatOpenAI with bound tools behind the same `Model` interface; honors `OPENAI_BASE_URL` | Phase 2 |
+| `agent/graph.py`, `docs/graph.md` | LangGraph engine over the shared steps; its drawing | Phase 2 |
+| `agent/tracing.py` | Opt-in LangSmith tracing with redaction | Phase 2 |
 | `agent/checkpoint.py` | Human checkpoint: full diff, real scan before and after (the proposed file is scanned in a temp folder), what it fixes / leaves open / introduces, then y/n. Only an explicit yes approves; no input is a no. Every decision is logged. `ScriptedHuman` stands in for the human in evals | 5 |
 | `agent/recovery.py` | Retries, rollback to the last tested-good file, cleanup after partial failure | 6 |
 | `agent/rules_model.py` | `RulesModel`: free, deterministic model behind the same interface (the default; the eval baseline) | 6 |
@@ -101,8 +222,8 @@ The run ends on the **first** of these, in priority order:
 
 1. Approval denied
 2. No fixed version exists
-3. Done — scan clean **and** tests green
-4. Handed off — the agent filed an issue for a human
+3. Done — scan clean **and** tests green (GitHub mode: **and** the fix PR merged)
+4. Handed off — the agent filed a handoff issue for a human (a tracking issue does not end the run)
 5. 3 failed fix attempts
 6. Cost cap — $0.50
 7. Step limit — 12 steps

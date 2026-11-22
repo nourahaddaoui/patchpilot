@@ -7,6 +7,10 @@ turn by fixed rules:
   scan -> read requirements.txt -> bump each vulnerable pin to the smallest
   version that fixes every finding for it -> run tests -> rescan.
 
+In GitHub mode (the loop offers merge_pr only then) the same fix is wrapped:
+
+  scan -> tracking issue -> read -> bump -> run tests -> rescan -> open_pr -> merge_pr.
+
 When it cannot finish safely (no fixed version, the bump breaks the tests, a
 tool keeps failing, findings in files it cannot edit) it files one issue with
 create_issue so a human decides. It is the baseline the eval compares GPT to,
@@ -118,9 +122,32 @@ class RulesModel:
         return self._call("create_issue", {"title": title[:120].rstrip(), "body": body[:3900]},
                           "I cannot finish this safely; handing it to a human.")
 
+    def _tracking_issue(self, scan: dict, plan: dict[str, str]) -> ModelReply:
+        vulns = [v for v in scan.get("vulnerabilities") or [] if v.get("package") in plan]
+        ids = sorted({v.get("id") or "?" for v in vulns})
+        title = f"Vulnerable dependencies: {', '.join(ids[:3])}{' and more' if len(ids) > 3 else ''} in {', '.join(plan)}"
+        rows = "\n".join(f"| {v.get('id')} | {v.get('package')} | {v.get('installed')} | {plan[v['package']]} |"
+                         for v in vulns[:30])
+        body = ("Trivy found known vulnerabilities in `requirements.txt`.\n\n"
+                "| ID | Package | Installed | Fix PatchPilot will pin |\n| --- | --- | --- | --- |\n"
+                f"{rows}\n\nPatchPilot will open a pull request that closes this issue once CI passes.")
+        return self._call("create_issue", {"title": title[:120].rstrip(), "body": body[:3900], "purpose": "tracking"},
+                          "Open a tracking issue so the fix PR can close it.")
+
+    def _deliver(self, steps: list[Step]) -> ModelReply:
+        """GitHub mode, fix verified in the sandbox: open the PR, then merge it."""
+        i_pr = _last(steps, lambda s: s.tool == "open_pr" and s.data is not None)
+        if i_pr < 0:
+            return self._call("open_pr", {}, "Tests are green and the rescan is clean: open the pull request.")
+        number = (steps[i_pr].data or {}).get("number")
+        if _last(steps, lambda s: s.tool == "merge_pr" and s.data is not None) < 0 and isinstance(number, int):
+            return self._call("merge_pr", {"number": number}, "Merge the pull request once CI passes.")
+        return ModelReply(text="The pull request is merged; nothing left to do.")
+
     def complete(self, messages: list[dict], tools: list[dict]) -> ModelReply:
         steps = transcript(messages)
         last = steps[-1] if steps else None
+        github = any(t.get("name") == "merge_pr" for t in tools or [])
 
         if last is not None and not last.ok:
             if last.tool == "create_issue":
@@ -149,6 +176,8 @@ class RulesModel:
                 "A human needs to decide: adapt the code to the new version, or accept the risk.")
         if i_edit > i_scan:
             return self._call("run_scan", {}, "Tests are green after the fix: rescan to confirm.")
+        if github and i_edit >= 0 and scan.get("clean") and tests is not None and tests.get("green"):
+            return self._deliver(steps)
 
         vulns = scan.get("vulnerabilities") or []
         if scan.get("clean"):
@@ -159,6 +188,9 @@ class RulesModel:
                                f"Test summary: {tests.get('summary') or 'n/a'}")
 
         plan = plan_fixes(scan)
+        tracked = any(s.tool == "create_issue" and (s.data or {}).get("purpose") == "tracking" for s in steps)
+        if github and plan and not tracked and i_edit < 0:
+            return self._tracking_issue(scan, plan)
         tried = {(s.args.get("package"), s.args.get("version")) for s in steps if s.tool == "edit_file"}
         for pkg, ver in plan.items():
             if (pkg, ver) in tried:
