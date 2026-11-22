@@ -72,7 +72,7 @@ def run(args: dict, ctx: ToolContext) -> str:
         proc = ctx.runner(
             build_command(ctx, target),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=ctx.scan_timeout_s,
         )
     except FileNotFoundError:

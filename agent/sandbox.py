@@ -45,7 +45,7 @@ def commit_fix(repo: Path | str, message: str) -> str | None:
     if not is_sandbox(repo):
         raise RuntimeError(f"'{repo}' is not a PatchPilot sandbox; refusing to commit")
     def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([*_GIT, *args], cwd=repo, capture_output=True, text=True)
+        return subprocess.run([*_GIT, *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
     branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     if branch != FIX_BRANCH:
         raise RuntimeError(f"sandbox is on '{branch}', expected '{FIX_BRANCH}'; refusing to commit")
@@ -63,7 +63,7 @@ def reset(source: Path | str = TEMPLATE, dest: Path | str = WORK) -> Path:
     proc = subprocess.run(
         [bash(), str(RESET_SCRIPT), str(source), str(dest)],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "sandbox reset failed")

@@ -77,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     if test_python:
         ctx.test_python = test_python
         ctx.install_project = True
+        ctx.install_timeout_s = 600  # real repos pin dozens of packages
+        ctx.test_timeout_s = 600
     ctx.approve = Checkpoint(ctx, logger)  # human sees diff + scan before/after, then y/n
     print(f"PatchPilot run {logger.run_id} on {ctx.repo_root} with {model.name} "
           f"(max {limits.max_steps} steps, ${limits.max_cost_usd:.2f}, {limits.max_failed_fixes} failed fixes)")

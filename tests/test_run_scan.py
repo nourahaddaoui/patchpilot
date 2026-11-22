@@ -82,3 +82,18 @@ def test_real_scan_of_template_finds_requests_cves():
     out = json.loads(run_scan.run({}, ctx))
     ids = {v["id"] for v in out["vulnerabilities"] if v["package"] == "requests"}
     assert "CVE-2023-32681" in ids
+
+
+def test_scanner_output_is_decoded_as_utf8(ctx):
+    """Real CVE titles contain non-ASCII text; Windows' default code page cannot decode it."""
+    import subprocess as sp
+    from agent.tools import run_scan
+    seen = {}
+
+    def runner(cmd, **kw):
+        seen.update(kw)
+        return sp.CompletedProcess(cmd, 0, '{"Results": []}', "")
+
+    ctx.runner = runner
+    run_scan.run({}, ctx)
+    assert seen["encoding"] == "utf-8" and seen["errors"] == "replace"
