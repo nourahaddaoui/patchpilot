@@ -83,8 +83,28 @@ def compare(before: dict, after: dict) -> dict:
     }
 
 
-def render(proposal: dict, before: dict, after: dict) -> str:
-    """The text the human sees. Pure function, so it is easy to test."""
+def _norm(path) -> str:
+    return str(path or "").replace("\\", "/").lstrip("./")
+
+
+def split_by_file(scan: dict, path: str) -> tuple[dict, list[dict]]:
+    """Keep only the findings in the edited file; return the others separately.
+
+    The AFTER preview scans the proposed file alone, so BEFORE must cover that same
+    file, or findings in other files (e.g. a nested requirements.txt) would look fixed.
+    Findings without a file are kept (older scan output)."""
+    if "error" in scan:
+        return scan, []
+    want = _norm(path)
+    mine, other = [], []
+    for v in scan.get("vulnerabilities") or []:
+        (mine if not v.get("file") or _norm(v["file"]) == want else other).append(v)
+    return {**scan, "vulnerabilities": mine, "count": len(mine), "clean": not mine}, other
+
+
+def render(proposal: dict, before: dict, after: dict, elsewhere: list[dict] | None = None) -> str:
+    """The text the human sees. Pure function, so it is easy to test.
+    `before` covers only the edited file; `elsewhere` lists findings in other files."""
     lines = [
         "",
         "=" * 72,
@@ -96,7 +116,8 @@ def render(proposal: dict, before: dict, after: dict) -> str:
         clean_block(proposal.get("diff", "")),
     ]
 
-    for label, scan in (("Scan BEFORE (repo now)", before), ("Scan AFTER (if you approve)", after)):
+    for label, scan in ((f"Scan BEFORE ({clean(proposal['path'])} now)", before),
+                        ("Scan AFTER (if you approve)", after)):
         lines.append(f"--- {label} " + "-" * max(0, 67 - len(label)))
         if "error" in scan:
             lines.append(f"  scan unavailable: {clean(scan['error'], 200)}")
@@ -124,6 +145,10 @@ def render(proposal: dict, before: dict, after: dict) -> str:
         lines.append(f"  still open : {ids(diff['still_open']) or 'none'}")
         if diff["introduced"]:
             lines.append(f"  INTRODUCES : {ids(diff['introduced'])}   <-- new vulnerabilities")
+    if elsewhere:
+        files = sorted({clean(v.get("file")) for v in elsewhere})
+        lines.append(f"  not touched: {len(elsewhere)} findings in other files ({clean(', '.join(files), 200)}); "
+                     "this edit does not change them")
     lines.append("")
     return "\n".join(lines)
 
@@ -240,10 +265,10 @@ class Checkpoint:
         if proposal.get("tool") == "merge_pr":
             return self._github_write(proposal, render_merge(proposal), "Merge this pull request? [y/n] ",
                                       ("tool", "repo", "number", "head_sha", "method", "ci"))
-        before = scan_text(self.ctx)
+        before, elsewhere = split_by_file(scan_text(self.ctx), proposal.get("path") or "requirements.txt")
         after = scan_text(self.ctx, proposal["new_text"]) if "new_text" in proposal else {
             "error": "proposal has no file contents to preview"}
-        self.show(render(proposal, before, after))
+        self.show(render(proposal, before, after, elsewhere))
 
         t0 = time.perf_counter()
         approved, answer = self._answer()

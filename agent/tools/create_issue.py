@@ -171,6 +171,10 @@ def github_request(ctx: ToolContext, method: str, path: str, body: dict | None =
         raise ToolError("not_allowed", f"GitHub refused the request (HTTP {status}): the token is not allowed to do this on {ctx.github_repo}. {nothing}")
     if status == 404:
         raise ToolError("not_found", f"GitHub repo '{ctx.github_repo}' (or the resource asked for) was not found. {nothing}")
+    if status == 410:  # GitHub: the feature is disabled on this repo (e.g. Issues off on a fork)
+        raise ToolError("not_allowed", f"GitHub says this is turned off on {ctx.github_repo} (HTTP 410): for issues, "
+                                       f"a repo admin must enable them in Settings > General > Features > Issues. "
+                                       f"{nothing} Retrying will not help.")
     if status >= 400:
         raise ToolError("tool_down", f"GitHub returned HTTP {status}. {nothing} You may retry once.")
     return status, payload

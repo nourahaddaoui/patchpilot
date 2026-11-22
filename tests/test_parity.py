@@ -55,7 +55,7 @@ SCENARIOS = {
                  ["run_scan", "read_file"]),
     "never-finishes": (None, lambda: ScriptedModel([READ]), local_ctx, StopReason.STEP_LIMIT, ["read_file"] * 12),
     "never-calls-a-tool": (None, lambda: ScriptedModel([ModelReply(text="hmm")]), local_ctx,
-                           StopReason.STEP_LIMIT, []),
+                           StopReason.GAVE_UP, []),
 }
 
 

@@ -38,7 +38,7 @@ def test_a_model_that_never_finishes_halts_at_twelve_steps(world, make_ctx, logg
 def test_turns_without_tool_calls_still_count(world, make_ctx, logger):
     model = ScriptedModel([ModelReply(text="thinking...")])
     result = run_graph(model, make_ctx(True), logger=logger)
-    assert result.stop_reason is StopReason.STEP_LIMIT and result.state.steps == 12
+    assert result.stop_reason is StopReason.GAVE_UP and result.state.steps == 2  # nudged once, then stopped
     assert tool_records(logger) == []
 
 

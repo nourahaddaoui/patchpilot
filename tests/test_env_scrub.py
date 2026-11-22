@@ -44,11 +44,16 @@ def secrets_set(monkeypatch):
 
 
 def _assert_scrubbed(env: dict) -> None:
+    if os.name == "nt":  # Windows env names are case-insensitive and stored upper-case
+        env = {k.upper(): v for k, v in env.items()}
+        fold = str.upper
+    else:
+        fold = str
     for name in FAKE_SECRETS:
-        assert name not in env, name
+        assert fold(name) not in env, name
     assert not any(v in FAKE_SECRETS.values() for v in env.values())
     for name, value in NEEDED.items():
-        assert env.get(name) == value, name
+        assert env.get(fold(name)) == value, name
 
 
 def test_is_secret_rules():

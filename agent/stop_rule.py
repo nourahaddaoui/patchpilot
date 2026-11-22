@@ -49,6 +49,7 @@ class StopReason(str, Enum):
     COST_CAP = "cost_cap"
     STEP_LIMIT = "step_limit"
     HANDED_OFF = "handed_off"
+    GAVE_UP = "gave_up"  # the model answered without a tool call twice in a row
 
 
 ISSUE_TOOL = "create_issue"
@@ -59,6 +60,7 @@ class Limits:
     max_steps: int = 12
     max_cost_usd: float = 0.50
     max_failed_fixes: int = 3
+    max_idle_turns: int = 2  # consecutive turns without a tool call (the first one gets a nudge)
 
 
 @dataclass
@@ -77,12 +79,14 @@ class RunState:
     pr_opened: bool = False  # True only if open_pr created that PR in this run (not an older one)
     github_mode: bool = False  # set once by the loop from the ToolContext
     merged: bool = False  # GitHub mode: merge_pr merged the fix PR
+    idle_turns: int = 0  # consecutive turns with no tool call
     history: list[dict] = field(default_factory=list)
 
     def record_step(self, tool_name: str, cost_usd: float = 0.0) -> None:
         """Count one tool call and add its cost."""
         self.steps += 1
         self.cost_usd += cost_usd
+        self.idle_turns = self.idle_turns + 1 if tool_name == "(no tool call)" else 0
         self.history.append(
             {"step": self.steps, "tool": tool_name, "cost_usd": cost_usd}
         )
@@ -113,6 +117,8 @@ def check(
         return StopReason.FIX_ATTEMPTS
     if state.cost_usd >= limits.max_cost_usd:
         return StopReason.COST_CAP
+    if state.idle_turns >= limits.max_idle_turns:
+        return StopReason.GAVE_UP  # nudged once and still no tool call: stop instead of burning steps
     if state.steps >= limits.max_steps:
         return StopReason.STEP_LIMIT
     return None

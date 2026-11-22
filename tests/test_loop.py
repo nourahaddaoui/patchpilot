@@ -188,9 +188,16 @@ def test_a_model_that_never_finishes_halts_at_the_step_limit(world, make_ctx, lo
 def test_a_model_that_never_calls_a_tool_still_halts(world, make_ctx, logger):
     model = ScriptedModel([ModelReply(text="I think we are done.")])
     result = run(model, make_ctx(True), logger=logger)
-    assert result.stop_reason is StopReason.STEP_LIMIT
-    assert model.calls == 12 and tool_records(logger) == []
+    assert result.stop_reason is StopReason.GAVE_UP  # nudged once, then stopped: no wasted steps
+    assert model.calls == 2 and tool_records(logger) == []
     assert model.seen[1][-1] == {"role": "user", "content": NUDGE}
+
+
+def test_one_silent_turn_between_tool_calls_does_not_stop_the_run(world, make_ctx, logger):
+    read = ("read_file", {"path": "requirements.txt"})
+    model = ScriptedModel([read, ModelReply(text="hmm"), read, ModelReply(text="hmm")] * 3)
+    result = run(model, make_ctx(True), logger=logger)
+    assert result.stop_reason is StopReason.STEP_LIMIT and result.state.steps == 12
 
 
 def test_cost_cap_blocks_the_tool_call_that_would_exceed_it(world, make_ctx, logger):

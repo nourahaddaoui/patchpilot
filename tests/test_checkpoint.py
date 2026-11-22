@@ -219,3 +219,30 @@ def test_real_preview_scan_of_the_proposed_requirements(work):
     cp(dict(PROPOSAL, new_text="requests==2.33.0\n"))
     d = cp.decisions[0]
     assert "CVE-2024-47081" in d["scan_before"] and d["scan_after"] == []
+
+
+def test_findings_in_other_files_are_not_shown_as_fixed():
+    """Regression: on a repo with a nested requirements.txt, BEFORE covered the whole repo and
+    AFTER only the edited file, so the other file's CVEs were reported as fixed by the edit."""
+    before = {"clean": False, "count": 2, "vulnerabilities": [
+        {"id": "CVE-ROOT", "package": "pytest", "installed": "8.3.3", "fixed": "9.0.3", "file": "requirements.txt"},
+        {"id": "CVE-NESTED", "package": "requests", "installed": "2.25.1", "fixed": "2.32.4",
+         "file": "sandbox/template/requirements.txt"},
+    ]}
+    after = {"clean": True, "count": 0, "vulnerabilities": []}
+    mine, other = checkpoint.split_by_file(before, "requirements.txt")
+    assert [v["id"] for v in mine["vulnerabilities"]] == ["CVE-ROOT"] and mine["count"] == 1
+    assert [v["id"] for v in other] == ["CVE-NESTED"]
+    assert compare(mine, after)["fixed"] == ["CVE-ROOT"]
+    text = render({"path": "requirements.txt", "package": "pytest", "from": "8.3.3", "to": "9.0.3",
+                   "action": "bump", "diff": ""}, mine, after, other)
+    effect = text.split("--- Effect")[1]
+    assert "CVE-ROOT" in effect and "CVE-NESTED" not in effect.split("not touched")[0]
+    assert "not touched: 1 findings in other files (sandbox/template/requirements.txt)" in effect
+
+
+def test_split_by_file_handles_windows_paths_and_missing_file():
+    scan = {"vulnerabilities": [{"id": "A", "file": r".\requirements.txt"}, {"id": "B"}]}
+    mine, other = checkpoint.split_by_file(scan, "requirements.txt")
+    assert [v["id"] for v in mine["vulnerabilities"]] == ["A", "B"] and other == []
+    assert checkpoint.split_by_file({"error": "down"}, "requirements.txt") == ({"error": "down"}, [])
