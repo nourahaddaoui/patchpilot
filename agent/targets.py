@@ -48,6 +48,16 @@ def slug(target: str) -> str:
     return _SLUG.sub("-", tail).strip("-") or "target"
 
 
+_GITHUB = re.compile(r"^(?:https?://(?:www\.)?github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                     r"([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$")
+
+
+def github_repo(target: str | None) -> str | None:
+    """'owner/name' for a GitHub URL target, else None. Used to file issues on the repo being fixed."""
+    m = _GITHUB.match((target or "").strip())
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
 def _rmtree(path: Path) -> None:
     def onerror(func, p, _exc):  # git objects are read-only on Windows
         os.chmod(p, stat.S_IWRITE)

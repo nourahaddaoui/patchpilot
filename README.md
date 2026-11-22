@@ -26,6 +26,8 @@ That fixes the template repo with the free rule-based model: no API key, no cost
 | `python run.py --model gpt-4o-mini` | GPT chooses the tools (through LangChain); needs `OPENAI_API_KEY` in `.env`; cost counted against the $0.50 cap |
 | `python run.py --engine loop` | The hand-written loop instead of the LangGraph engine (same steps, same stop rule) |
 | `python run.py --no-reset` | Run again on the existing `sandbox/work` |
+| `python run.py --target https://github.com/OWNER/REPO --issues github` | GitHub mode on that repo: issues (and the fix PR) go to `OWNER/REPO`; needs `GITHUB_TOKEN` with access to it |
+| `python run.py --tui` | The terminal UI (below); the other flags prefill its form |
 
 **Real repos are never edited in place.** A target is cloned into `sandbox/sources/<name>`, copied into the throwaway `sandbox/work`, and fixed there; its tests run in their own interpreter (`sandbox/.venvs/<name>`). A fix that ends `done` is committed on branch `patchpilot/fix` inside `sandbox/work` (the run prints `git -C sandbox/work show <sha>`); pushing it to the real repo is up to you. Only a root `requirements.txt` with `==` pins can be edited; findings elsewhere (other lockfiles) end in an issue for a human. A repo with no tests can never reach `done`, because the fix cannot be verified.
 
@@ -36,6 +38,24 @@ Each run prints its stop reason, step count and cost, and writes its trajectory 
 GPT models: prices live in `agent/model.py`; a model without a known price is refused, because the cost cap would never fire. `PATCHPILOT_MODEL` sets the default model. See [Engines and models](#engines-and-models) for the engine choice, local models and the plain-SDK path.
 
 The Trivy DB is about 1.6 GB unpacked. To keep it on another disk, set `PATCHPILOT_TRIVY_CACHE` (in your environment or `.env`) before `python scripts/setup.py`.
+
+## Terminal UI
+
+```bash
+python run.py --tui
+python run.py --tui --target https://github.com/OWNER/REPO --issues github
+```
+
+A Textual app (`agent/tui.py`) on top of the same run:
+
+- **Form:** the repo (a GitHub URL, a local folder, or empty for the template), the model, the engine, and a **GitHub issues** switch. With the switch on, issues go to the repo in the form, so a URL like `https://github.com/you/app` files on `you/app`.
+- **Counter:** steps, cost and stop reason, live.
+- **Steps:** a timeline of every model decision, tool call, approval and recovery, read from the run's JSONL trajectory as it is written.
+- **Approval:** the exact diff with the scan before and after, or the issue / PR text, with **Approve (y)** and **Deny (n)**.
+
+The safety logic is unchanged: the UI only supplies the answer to the same checkpoint the CLI uses. Only Approve is a yes. Quitting (`ctrl+q`) while a question is open answers no, and the run ends with its stop reason logged.
+
+**GitHub issues on any repo:** GitHub only accepts the issue if your `GITHUB_TOKEN` can write issues on that repo. A fine-grained token covers repos you or your organization own; anything else fails with a plain error and nothing is filed. A bad setup (no token, a non-GitHub URL) is reported before anything is cloned. In GitHub mode the agent also proposes the fix PR and the merge, each behind its own approval; deny one to stop there.
 
 ## Engines and models
 
@@ -164,7 +184,7 @@ That is 8 tool calls; the 12-step cap still applies. The run ends `done` only on
 | Variable (in `.env`) | Value |
 |---|---|
 | `PATCHPILOT_ISSUES` | `github` |
-| `PATCHPILOT_GITHUB_REPO` | `owner/name` of a test repo (ours: a demo repo whose `main` is protected: PR required, status check `test` required, no force push) |
+| `PATCHPILOT_GITHUB_REPO` | Only needed when `--target` is not a GitHub URL (a GitHub `--target` is used instead). `owner/name` of a test repo (ours: a demo repo whose `main` is protected: PR required, status check `test` required, no force push) |
 | `GITHUB_TOKEN` | Fine-grained token for that repo only: **Actions** read; **Contents**, **Issues**, **Pull requests** read and write. No Administration. |
 
 Run it with the template on the demo repo: `python run.py --target https://github.com/OWNER/REPO`.
@@ -226,7 +246,8 @@ The run ends on the **first** of these, in priority order:
 4. Handed off — the agent filed a handoff issue for a human (a tracking issue does not end the run)
 5. 3 failed fix attempts
 6. Cost cap — $0.50
-7. Step limit — 12 steps
+7. Gave up — the model answered without calling a tool twice in a row (the first time it is nudged)
+8. Step limit — 12 steps
 
 Once `check()` returns a reason, the loop makes no further tool calls. One exception: after "no fixed version", a single `create_issue` call is still allowed so a human hears about it; the reason then stays `no_fixed_version`.
 

@@ -155,6 +155,16 @@ def test_github_http_errors(work, monkeypatch, status, kind):
     assert not res.ok and res.error_type == kind and "Traceback" not in res.content
 
 
+def test_issues_turned_off_on_the_repo_says_so_and_is_not_retried(work, monkeypatch):
+    """HTTP 410 = Issues disabled (forks start that way). Not a transient outage."""
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    ctx = make_ctx(work, issue_mode="github", github_repo="o/r",
+                   http=FakeHTTP((410, {"message": "Issues are disabled for this repo"})))
+    res = call_tool("create_issue", ARGS, ctx)
+    assert not res.ok and res.error_type == "not_allowed"
+    assert "Features > Issues" in res.content and "will not help" in res.content
+
+
 def test_github_unreachable(work, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "t")
     ctx = make_ctx(work, issue_mode="github", github_repo="o/r", http=FakeHTTP(OSError("down")))

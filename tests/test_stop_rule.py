@@ -117,3 +117,20 @@ def test_github_run_that_never_merges_ends_at_the_step_limit(world, work, logger
     assert result.state.scan_clean and result.state.tests_green and not result.state.merged
     assert result.stop_reason is StopReason.STEP_LIMIT and result.state.steps == 12
     assert result.commit is None
+
+
+def test_two_silent_turns_in_a_row_end_the_run_as_gave_up():
+    from agent.stop_rule import Limits, RunState, StopReason, check
+    s = RunState()
+    s.record_step("(no tool call)")
+    assert check(s, Limits()) is None  # first silent turn: nudge
+    s.record_step("(no tool call)")
+    assert check(s, Limits()) is StopReason.GAVE_UP
+
+
+def test_a_tool_call_resets_the_silent_turn_count():
+    from agent.stop_rule import Limits, RunState, check
+    s = RunState()
+    for name in ["(no tool call)", "read_file", "(no tool call)"]:
+        s.record_step(name)
+    assert s.idle_turns == 1 and check(s, Limits()) is None
