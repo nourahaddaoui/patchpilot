@@ -115,11 +115,16 @@ class OpenAIModel:
 
             client = OpenAI()
         self.client = client
+        from agent.injection import enabled
+
+        self.defense = enabled()  # agent/injection.py: tool output is wrapped and labelled as data
 
     def complete(self, messages: list[dict], tools: list[dict]) -> ModelReply:
+        from agent.injection import guard
+
         response = self.client.chat.completions.create(
             model=self.name,
-            messages=messages,
+            messages=guard(messages, self.defense),
             tools=openai_tools(tools),
             tool_choice="auto",
             parallel_tool_calls=False,  # one tool call per step keeps the stop rule exact
