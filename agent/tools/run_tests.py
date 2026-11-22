@@ -45,7 +45,7 @@ def _install(ctx: ToolContext) -> None:
     try:
         proc = ctx.runner(
             [ctx.test_python, "-m", "pip", "install", "-q", "-r", str(req)],
-            cwd=str(ctx.repo_root), capture_output=True, text=True,
+            cwd=str(ctx.repo_root), capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=ctx.install_timeout_s, env=_env(),
         )
     except FileNotFoundError:
@@ -71,7 +71,7 @@ def _install_project(ctx: ToolContext) -> None:
     try:
         ctx.runner(
             [ctx.test_python, "-m", "pip", "install", "-q", "--no-deps", "-e", "."],
-            cwd=str(ctx.repo_root), capture_output=True, text=True,
+            cwd=str(ctx.repo_root), capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=ctx.install_timeout_s, env=_env(),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -95,7 +95,7 @@ def run(args: dict, ctx: ToolContext) -> str:
     try:
         proc = ctx.runner(
             [ctx.test_python, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
-            cwd=str(ctx.repo_root), capture_output=True, text=True,
+            cwd=str(ctx.repo_root), capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=ctx.test_timeout_s, env=_env(),
         )
     except FileNotFoundError:
@@ -103,6 +103,10 @@ def run(args: dict, ctx: ToolContext) -> str:
     except subprocess.TimeoutExpired:
         raise ToolError("timeout", f"the tests timed out after {ctx.test_timeout_s}s. You may retry once; if it times out again, stop.") from None
     output = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode == 5:  # pytest found nothing: many repos keep unittest tests in tests.py
+        fallback = _run_unittest(ctx)
+        if fallback is not None:
+            return json.dumps(fallback, ensure_ascii=False)
     parsed = parse_counts(output)
     if proc.returncode == 5:
         parsed["summary"] = parsed["summary"] or "no tests collected"
@@ -113,3 +117,35 @@ def run(args: dict, ctx: ToolContext) -> str:
         "output_tail": _tail(output),
     }
     return json.dumps(result, ensure_ascii=False)
+
+
+_RAN = re.compile(r"Ran (\d+) tests?")
+_FAILS = re.compile(r"(failures|errors)=(\d+)")
+
+
+def _run_unittest(ctx: ToolContext) -> dict | None:
+    """`python -m unittest discover` (finds test*.py, e.g. tests.py). None if it finds no tests either."""
+    try:
+        proc = ctx.runner(
+            [ctx.test_python, "-m", "unittest", "discover", "-q"],
+            cwd=str(ctx.repo_root), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=ctx.test_timeout_s, env=_env(),
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    output = (proc.stdout or "") + (proc.stderr or "")
+    ran = _RAN.search(output)
+    if not ran or int(ran.group(1)) == 0:
+        return None
+    total = int(ran.group(1))
+    bad = {k: int(v) for k, v in _FAILS.findall(output)}
+    failed, errors = bad.get("failures", 0), bad.get("errors", 0)
+    return {
+        "green": proc.returncode == 0,
+        "exit_code": proc.returncode,
+        "passed": max(total - failed - errors, 0),
+        "failed": failed,
+        "errors": errors,
+        "summary": f"unittest: ran {total}, {failed} failed, {errors} errors",
+        "output_tail": _tail(output),
+    }

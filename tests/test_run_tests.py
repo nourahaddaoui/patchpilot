@@ -76,3 +76,18 @@ def test_install_then_pytest(ctx, fake_runner):
 def test_parse_counts():
     line = "==== 2 failed, 5 passed, 1 error in 0.3s ===="
     assert run_tests.parse_counts(line) == {"passed": 5, "failed": 2, "errors": 1, "summary": "2 failed, 5 passed, 1 error in 0.3s"}
+
+
+def test_unittest_fallback_when_pytest_finds_nothing(ctx, fake_runner):
+    """Repos that keep unittest tests in tests.py: pytest exits 5, unittest discover runs them."""
+    import json as _json
+    from agent.tools import run_tests
+    ctx.runner = fake_runner((5, "no tests ran in 0.01s", ""), (0, "", "....\n----\nRan 4 tests in 0.1s\n\nOK\n"))
+    out = _json.loads(run_tests.run({}, ctx))
+    assert out["green"] is True and out["passed"] == 4 and "unittest" in out["summary"]
+    ctx.runner = fake_runner((5, "no tests ran", ""), (1, "", "Ran 4 tests\n\nFAILED (failures=1, errors=1)\n"))
+    out = _json.loads(run_tests.run({}, ctx))
+    assert out["green"] is False and (out["passed"], out["failed"], out["errors"]) == (2, 1, 1)
+    ctx.runner = fake_runner((5, "no tests ran", ""), (5, "", "Ran 0 tests\n\nNO TESTS RAN\n"))
+    out = _json.loads(run_tests.run({}, ctx))
+    assert out["green"] is False and "no tests" in out["summary"]

@@ -77,7 +77,7 @@ def fetch(target: str, sources: Path = SOURCES, timeout_s: int = 300) -> Path:
         cmd += ["--depth", "1"]
     cmd += [target if is_url(target) else str(Path(target).resolve()), str(dest)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s,
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s,
                               env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
     except subprocess.TimeoutExpired:
         raise TargetError(f"cloning '{target}' timed out after {timeout_s}s.") from None
@@ -95,7 +95,7 @@ def target_python(name: str, venvs: Path = VENVS, base_python: str = sys.executa
         venvs.mkdir(parents=True, exist_ok=True)
         for cmd in ([base_python, "-m", "venv", str(venv)],
                     [str(py), "-m", "pip", "install", "-q", "pytest==8.3.3"]):
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
             if proc.returncode != 0:
                 raise TargetError(f"could not prepare the test interpreter: {(proc.stderr or proc.stdout).strip()[-300:]}")
     return str(py)
