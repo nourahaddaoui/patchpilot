@@ -34,6 +34,14 @@ def test_health_and_page(client):
     assert client.get("/healthz").json()["ok"] is True
     page = client.get("/")
     assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert '<script src="/static/app.js">' in page.text and "<script>" not in page.text  # no inline script (CSP)
+    js = client.get("/static/app.js")
+    assert js.status_code == 200 and "javascript" in js.headers["content-type"]
+
+
+def test_the_page_never_inserts_agent_output_as_html(client):
+    js = client.get("/static/app.js").text
+    assert "innerHTML" not in js and "insertAdjacentHTML" not in js and "outerHTML" not in js
 
 
 def test_every_response_has_the_security_headers(client):

@@ -1,1 +1,113 @@
-<!doctype html><title>PatchPilot</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>PatchPilot: vulnerability remediation agent</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #667085; --line: #e4e7ec;
+    --accent: #2f5bea; --ok: #12805c; --bad: #c4320a; --warn: #b54708; --code: #f2f4f7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  header { padding: 20px 28px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+  header p { margin: 4px 0 0; color: var(--muted); max-width: 900px; }
+  .note { margin-top: 10px; display: inline-block; font-size: 13px; color: var(--muted); background: var(--code); border-radius: 6px; padding: 4px 10px; }
+  main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 20px; padding: 20px 28px 40px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  h2 { font-size: 15px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .group { margin: 14px 0 6px; font-weight: 600; font-size: 13px; color: var(--muted); }
+  .scenarios { max-height: 52vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px 10px; }
+  label.scn { display: flex; gap: 8px; padding: 6px 4px; border-radius: 6px; cursor: pointer; }
+  label.scn:hover { background: var(--code); }
+  label.scn input { margin-top: 4px; }
+  label.scn .id { font-weight: 600; font-size: 13px; }
+  label.scn .desc { font-size: 13px; color: var(--muted); }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .controls label { font-size: 13px; color: var(--muted); }
+  select, button { font: inherit; }
+  select { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  button { border: 0; border-radius: 8px; padding: 9px 16px; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .primary { background: var(--accent); color: #fff; width: 100%; margin-top: 14px; }
+  .approve { background: var(--ok); color: #fff; }
+  .deny { background: var(--bad); color: #fff; }
+  .status { display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline; margin-bottom: 12px; }
+  .status .big { font-size: 18px; font-weight: 600; }
+  .pill { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--code); }
+  .pill.waiting { background: #fef0c7; color: var(--warn); }
+  .pill.finished { background: #d1fadf; color: var(--ok); }
+  .pill.error { background: #fee4e2; color: var(--bad); }
+  .approval { border: 2px solid var(--warn); background: #fffcf5; border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .approval .q { font-weight: 700; margin-bottom: 8px; }
+  .approval .buttons { display: flex; gap: 10px; margin-top: 10px; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); border-radius: 6px; padding: 10px; max-height: 360px; overflow: auto; }
+  ol.timeline { list-style: none; margin: 0; padding: 0; }
+  ol.timeline li { display: grid; grid-template-columns: 44px 110px 1fr; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+  ol.timeline li:first-child { border-top: 0; }
+  .step { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .kind { font-weight: 700; font-size: 12px; letter-spacing: 0.03em; }
+  .kind.model { color: var(--accent); } .kind.ok { color: var(--ok); } .kind.err { color: var(--bad); }
+  .kind.cp { color: var(--warn); } .kind.stop { color: var(--ink); }
+  .detail { min-width: 0; }
+  .detail pre { max-height: 140px; margin-top: 4px; }
+  .result { border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .result.pass { background: #ecfdf3; border: 1px solid #abefc6; }
+  .result.fail { background: #fef3f2; border: 1px solid #fecdca; }
+  .result .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .muted { color: var(--muted); }
+  .error-msg { color: var(--bad); font-weight: 600; margin-top: 10px; min-height: 1.5em; }
+  footer { color: var(--muted); font-size: 13px; padding: 0 28px 30px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>PatchPilot</h1>
+  <p>An agent that finds a known-vulnerable Python dependency, bumps its pin, runs the tests and rescans, and writes nothing until a human approves the exact change. Pick a scenario, start it, and be the human.</p>
+  <span class="note">Demo: the scanner (Trivy), pip and pytest are simulated per scenario. The agent, its tools, the approval checkpoint, recovery and the stop rule are the real code.</span>
+</header>
+<main>
+  <section>
+    <h2>1. Scenario</h2>
+    <div class="scenarios" id="scenarios"><p class="muted">Loading scenarios…</p></div>
+    <div class="controls">
+      <div><label for="model">Model</label><select id="model"></select></div>
+      <div><label for="engine">Engine</label>
+        <select id="engine"><option value="graph">LangGraph</option><option value="loop">Loop</option></select></div>
+    </div>
+    <button class="primary" id="start" disabled>Start run</button>
+    <div class="error-msg" id="start-error"></div>
+    <p class="muted" style="font-size:13px">Model <b>rules</b> is the free deterministic agent. <b>compromised</b> (injection scenarios only) obeys every instruction an attacker hides in the tool output, to show which defense stops it.</p>
+  </section>
+  <section>
+    <h2>2. Run</h2>
+    <div id="idle" class="muted">Start a run to watch the agent work. When it wants to write, the change appears here and waits for you.</div>
+    <div id="run" hidden>
+      <div class="status">
+        <span class="big" id="run-title"></span>
+        <span class="pill" id="run-status"></span>
+        <span class="muted" id="run-meta"></span>
+      </div>
+      <div class="approval" id="approval" hidden>
+        <div class="q" id="approval-q"></div>
+        <pre id="approval-text"></pre>
+        <div class="buttons">
+          <button class="approve" id="approve">Approve (y)</button>
+          <button class="deny" id="deny">Deny (n)</button>
+        </div>
+        <p class="muted" style="font-size:13px;margin:8px 0 0">Only an explicit approve writes anything. No answer within 5 minutes counts as deny.</p>
+      </div>
+      <div class="result" id="result" hidden></div>
+      <ol class="timeline" id="timeline"></ol>
+    </div>
+  </section>
+</main>
+<footer>PatchPilot, Project 3 (The Operator). Source: <a href="https://github.com/nourahaddaoui/patchpilot">github.com/nourahaddaoui/patchpilot</a></footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

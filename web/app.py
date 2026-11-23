@@ -1,7 +1,7 @@
 """HTTP API and page for the hosted demo.
 
     GET  /healthz                    liveness (Render's health check)
-    GET  /                           the page (web/static/index.html)
+    GET  /                           the page (web/static/index.html; its script is /static/app.js)
     GET  /api/scenarios              the scenarios a visitor can run, with the models allowed for each
     POST /api/runs                   {"scenario": id, "model": "rules", "engine": "graph"} -> {"id": ...}
     GET  /api/runs/{id}              status, the step timeline, the question waiting for an answer, the result
@@ -23,6 +23,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from eval.scenarios import SCENARIOS
@@ -85,6 +86,8 @@ def create_app(manager: RunManager | None = None, starts_per_minute: int = START
         response = await call_next(request)
         response.headers.update(SECURITY_HEADERS)
         return response
+
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     @app.get("/healthz")
     def healthz() -> dict:
