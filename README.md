@@ -296,8 +296,11 @@ It needs `PATCHPILOT_ADMIN_TOKEN` (fine-grained, demo repo only, with Administra
 | `eval/langsmith_eval.py` | The eval as a LangSmith experiment: dataset, traced target, evaluators | Phase 3 |
 | `eval/results/` | Results tables (`.md`) and every run (`.json`) | Phase 3 |
 | `agent/injection.py` | Injection defense: tool output wrapped and labelled as data, one system-prompt rule | Phase 4 |
-| `threat_model.md` | Untrusted inputs and defenses | 15 |
-| `errors.md` | Error taxonomy with a test per class | 13 |
+| `errors.md`, `tests/test_errors.py` | Error taxonomy: one row per error class (tool down, bad arguments, empty result, wrong tool, loop, timeout, tests red, missing version, user changes mind), what the agent does, and the test that proves it | 13 |
+| `threat_model.md`, `tests/test_threats.py` | Every place untrusted text enters, what an attacker wants, the five defense layers and the test for each; accepted risks | 15 |
+| `scripts/prove_stop_rule.py`, `logs/proof/`, `tests/test_stop_proof.py` | Stop-rule proof: one logged run of the real agent per stop reason, each checked by a test | 17 |
+| `postmortem.md` | The real problems we hit, root causes, fixes and lessons | 19 |
+| `scripts/scan_secrets.py`, `tests/test_scan_secrets.py` | Credential scan of every tracked file before the freeze (masked output) | 20 |
 | `logs/` | JSONL trajectory logs (one per run) | 2+ |
 
 ## Stop rule
@@ -349,4 +352,5 @@ Runs the real agent (loop, tools, checkpoint with a scripted human, recovery, JS
 
 ## Contributions
 
+- **Noureddine Haddaoui** (`nourahaddaoui`): Days 1 to 3 and the Week 3 safety documents. The stop rule written as a spec first (`agent/stop_rule.py`) and its tests, the target repo template and the Trivy cache setup, the proposal; the three read tools with strict schemas, plain-text errors and JSONL call logging (`agent/tools/`, `agent/calllog.py`); the only write tool, `edit_file` (allowlist, idempotent, no downgrades, approval before write), and the sandbox reset. In Week 3: the stop-rule proof (`scripts/prove_stop_rule.py`, `logs/proof/`), the error taxonomy (`errors.md`), the threat model (`threat_model.md`), the credential scan (`scripts/scan_secrets.py`), the postmortem (`postmortem.md`), and their tests (`tests/test_stop_proof.py`, `tests/test_errors.py`, `tests/test_threats.py`, `tests/test_scan_secrets.py`).
 - **Youssef Turki** (`youssefturki222`): Phase 3 and the code of Phase 4. The trajectory eval suite (`eval/`: 40 scenarios, fault injection, fake world, plain-code grader, results tables, cost model), the eval as a LangSmith experiment (`eval/langsmith_eval.py`: dataset, traced target, evaluators), the prompt-injection defense (`agent/injection.py`), and their tests (`tests/test_eval.py`, `tests/test_injection.py`, `tests/test_langsmith_eval.py`). Details: `docs/contribution_eval_and_injection.md`.
