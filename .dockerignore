@@ -1,0 +1,17 @@
+# Keep the image small and free of anything local or secret.
+.git
+.env
+.env.*
+!.env.example
+.venv
+**/.venv
+**/.venvs
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.cache
+sandbox/work
+sandbox/sources
+logs/*.jsonl
+logs/issues
+eval/runs
