@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from langsmith import tracing_context
+
 from agent import sandbox
 from agent.calllog import CallLogger
 from agent.checkpoint import Checkpoint
@@ -99,7 +101,17 @@ def build_repo(scn: Scenario, root: Path) -> Path:
     return sandbox.reset(src, root / "work")
 
 
-def run_scenario(scn: Scenario, opts: Options, log_dir: Path, repeat: int = 1) -> dict:
+def run_scenario(scn: Scenario, opts: Options, log_dir: Path, repeat: int = 1, trace: bool = False) -> dict:
+    """Run and grade one scenario. trace=False (the offline eval) sends nothing to LangSmith, whatever
+    .env says; trace=True (eval/langsmith_eval.py) keeps the caller's tracing context, so the run's
+    model calls, tool calls and checkpoint decisions nest under the experiment's trace."""
+    if trace:
+        return _run_scenario(scn, opts, log_dir, repeat)
+    with tracing_context(enabled=False):
+        return _run_scenario(scn, opts, log_dir, repeat)
+
+
+def _run_scenario(scn: Scenario, opts: Options, log_dir: Path, repeat: int) -> dict:
     with tempfile.TemporaryDirectory(prefix="patchpilot-eval-") as tmp:
         work = build_repo(scn, Path(tmp))
         world = FakeWorld(list(scn.advisories), fault=scn.fault, **scn.world)
@@ -171,6 +183,9 @@ def report(rows: list[dict], opts: Options, scenarios: list[Scenario], repeats: 
                  "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                  "logs": log_dir.relative_to(PROJECT_ROOT).as_posix()},
         "summary": grade.aggregate(rows),
+        # The cost model leaves out the "limits" scenarios: their scripted models charge made-up
+        # costs on purpose (e.g. $0.20 per call to prove the cost cap), which is not the model under test.
+        "cost_basis": grade.aggregate([r for r in rows if r["category"] != "limits"]),
         "dev": grade.aggregate([r for r in rows if r["split"] == "dev"]),
         "heldout": grade.aggregate([r for r in rows if r["split"] == "heldout"]),
         "by_category": {c: grade.aggregate([r for r in rows if r["category"] == c]) for c in cats},

@@ -8,6 +8,7 @@
     python run.py eval --split heldout                  # only the 6 held-out scenarios
     python run.py eval --only inj-01-scan-title-downgrade --repeats 1
     python run.py eval --list                           # list the scenarios
+    python run.py eval --langsmith                      # the same eval as a LangSmith experiment (needs LANGSMITH_API_KEY)
 
 Results go to eval/results/<label>.md and .json; trajectories to eval/runs/ (git-ignored).
 A local model works too (free): see "Engines and models" in the README for OPENAI_BASE_URL.
@@ -37,6 +38,8 @@ def parse(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--rubber-stamp", action="store_true", help="injection: the human approves every write")
     p.add_argument("--out", default=str(PROJECT_ROOT / "eval" / "results"))
     p.add_argument("--list", action="store_true", help="list the scenarios and exit")
+    p.add_argument("--langsmith", action="store_true",
+                   help="run as a LangSmith experiment (dataset + evaluators); needs LANGSMITH_API_KEY")
     return p.parse_args(argv)
 
 
@@ -60,13 +63,27 @@ def main(argv: list[str] | None = None) -> int:
         print("no scenario matches", file=sys.stderr)
         return 2
 
+    import os
     from pathlib import Path
+
+    if ns.langsmith and not os.environ.get("LANGSMITH_API_KEY", "").strip():
+        print("--langsmith needs LANGSMITH_API_KEY (in your environment or .env). Get one at "
+              "https://smith.langchain.com (Settings > API Keys). Without it, run the eval offline "
+              "(no --langsmith): same scenarios, same grader, results in eval/results/.", file=sys.stderr)
+        return 2
 
     code = 0
     for engine in (list(ENGINES) if ns.engine == "both" else [ns.engine]):
         opts = Options(model=ns.model, engine=engine, defense=not ns.no_defense, rubber_stamp=ns.rubber_stamp)
         try:
-            result = run_all(scenarios, opts, ns.repeats)
+            if ns.langsmith:
+                from eval.langsmith_eval import run_experiment
+
+                result, _ = run_experiment(scenarios, opts, ns.repeats)
+                print(f"LangSmith experiment: {result['meta'].get('langsmith_experiment')} "
+                      "(open it at https://smith.langchain.com > Datasets & Experiments)")
+            else:
+                result = run_all(scenarios, opts, ns.repeats)
         except (RuntimeError, ValueError) as e:  # no API key, unknown price, ...
             print(e, file=sys.stderr)
             return 2

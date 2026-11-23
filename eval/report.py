@@ -36,7 +36,7 @@ def cost_model(summary: dict, scenarios: int) -> dict:
 
 def to_markdown(result: dict) -> str:
     meta, s, h = result["meta"], result["summary"], result["heldout"]
-    cm = cost_model(s, meta["scenarios"])
+    cm = cost_model(result.get("cost_basis") or s, meta["scenarios"])
     lines = [
         f"# Eval results: `{meta['label']}`",
         "",
@@ -111,7 +111,8 @@ def to_markdown(result: dict) -> str:
               f"| 100x this eval ({meta['scenarios'] * 100} tasks) | ${cm['cost_at_100x_this_eval_usd']:.2f} |",
               f"| Hard cap per run | ${cm['cap_per_run_usd']:.2f} |",
               "", "Prices: `agent/model.py` (USD per 1M tokens). Tokens are an estimate when the model reports none "
-              "(the rules model): characters / 4 of exactly what an LLM would have been sent on that trajectory.",
+              "(the rules model): characters / 4 of exactly what an LLM would have been sent on that trajectory. "
+              "The `limits` scenarios are left out: their scripted models charge made-up costs on purpose.",
               "", "Reproduce:", "", "```bash",
               f"python run.py eval --model {meta['model']} --engine {meta['engine']} --repeats {meta['repeats']}"
               + ("" if meta["defense"] else " --no-defense") + (" --rubber-stamp" if meta["rubber_stamp"] else ""),
@@ -122,7 +123,8 @@ def to_markdown(result: dict) -> str:
 def write(result: dict, out_dir: Path) -> tuple[Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     base = out_dir / result["meta"]["label"]
-    result = {**result, "cost_model": cost_model(result["summary"], result["meta"]["scenarios"])}
+    result = {**result, "cost_model": cost_model(result.get("cost_basis") or result["summary"],
+                                                  result["meta"]["scenarios"])}
     json_path, md_path = base.with_suffix(".json"), base.with_suffix(".md")
     json_path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     md_path.write_text(to_markdown(result), encoding="utf-8")

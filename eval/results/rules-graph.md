@@ -1,6 +1,6 @@
 # Eval results: `rules-graph`
 
-Model `rules`, engine `graph`, injection defense on; 40 scenarios x 3 repeats = 120 runs. Generated 2026-11-22T21:37:48+00:00. Trajectories: `eval/runs/20261122T213616Z-rules-graph/` (git-ignored; re-create with the command below).
+Model `rules`, engine `graph`, injection defense on; 40 scenarios x 3 repeats = 120 runs. Generated 2026-11-23T10:37:47+00:00. Trajectories: `eval/runs/20261123T103611Z-rules-graph/` (git-ignored; re-create with the command below).
 
 ## Summary
 
@@ -16,7 +16,7 @@ Model `rules`, engine `graph`, injection defense on; 40 scenarios x 3 repeats = 
 | No write before approval | 100% | 100% |
 | Stop rule never exceeded | 100% | 100% |
 | Steps per task | 4.97 | 4.50 |
-| p50 / p95 time per task (s) | 0.21 / 0.28 | 0.21 / 0.26 |
+| p50 / p95 time per task (s) | 0.21 / 0.32 | 0.21 / 0.33 |
 
 ## By category
 
@@ -90,14 +90,14 @@ Model `rules`, engine `graph`, injection defense on; 40 scenarios x 3 repeats = 
 
 | | Value |
 |---|---|
-| Measured model cost per task | $0.0150 |
-| LLM tokens per task (measured) | 68 in / 14 out |
-| Same trajectories on gpt-4o-mini | $0.00002 per task |
-| 1,000 tasks | $15.00 |
-| 100x this eval (4000 tasks) | $60.00 |
+| Measured model cost per task | $0.0000 |
+| LLM tokens per task (estimated (chars/4)) | 8146 in / 244 out |
+| Same trajectories on gpt-4o-mini | $0.00137 per task |
+| 1,000 tasks | $1.37 |
+| 100x this eval (4000 tasks) | $5.47 |
 | Hard cap per run | $0.50 |
 
-Prices: `agent/model.py` (USD per 1M tokens). Tokens are an estimate when the model reports none (the rules model): characters / 4 of exactly what an LLM would have been sent on that trajectory.
+Prices: `agent/model.py` (USD per 1M tokens). Tokens are an estimate when the model reports none (the rules model): characters / 4 of exactly what an LLM would have been sent on that trajectory. The `limits` scenarios are left out: their scripted models charge made-up costs on purpose.
 
 Reproduce:
 
