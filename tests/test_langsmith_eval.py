@@ -160,7 +160,7 @@ def test_experiment_runs_scores_and_traces_every_scenario(recording):
     paths = [url.split("?")[0] for _, url, _ in session.calls]
     assert any(p.endswith("/sessions") for p in paths)  # the experiment
     assert any(p.endswith("/feedback") for p in paths)  # the evaluator scores
-    for span in ('"model_call"', '"tool_call"', '"checkpoint_decision"'):  # the agent's steps, inside the trace
+    for span in ('"model_call"', '"run_scan"', '"checkpoint_decision"'):  # the agent's steps, inside the trace
         assert span in sent
     for key in ("step_accuracy", "tool_call_precision", "no_write_before_approval", "injection_blocked"):
         assert f'"{key}"' in sent
