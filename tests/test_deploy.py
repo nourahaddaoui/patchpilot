@@ -38,7 +38,7 @@ def test_render_blueprint_builds_the_dockerfile_with_a_health_check():
     import yaml
 
     spec = yaml.safe_load((ROOT / "render.yaml").read_text())
-    (svc,) = spec["services"]
+    svc = next(s for s in spec["services"] if s["name"] == "patchpilot")
     assert svc["type"] == "web" and svc["runtime"] == "docker"
     assert svc["dockerfilePath"] == "./Dockerfile" and (ROOT / "Dockerfile").is_file()
     assert svc["healthCheckPath"] == "/healthz"
@@ -54,3 +54,16 @@ def test_the_health_check_path_is_served():
 
     with TestClient(create_app()) as client:
         assert client.get("/healthz").status_code == 200
+
+
+def test_any_repo_service_runs_the_tui_with_trivy_and_no_secrets():
+    import yaml
+
+    spec = yaml.safe_load((ROOT / "render.yaml").read_text())
+    svc = next(s for s in spec["services"] if s["name"] == "patchpilot-repos")
+    assert svc["runtime"] == "docker" and svc["dockerfilePath"] == "./Dockerfile.tui"
+    assert not svc.get("envVars")  # GITHUB_TOKEN / OPENAI_API_KEY only in the dashboard
+    docker = lines("Dockerfile.tui")
+    assert any(l.startswith("COPY --from=trivy /usr/local/bin/trivy") for l in docker)
+    assert "USER patchpilot" in docker and "LANGSMITH_TRACING=false" in " ".join(docker)
+    assert any("agent --tui" in l for l in docker)

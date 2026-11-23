@@ -1,0 +1,40 @@
+# PatchPilot terminal UI in the browser, for any repository (deployed on Render: see render.yaml).
+#
+#   docker build -f Dockerfile.tui -t patchpilot-tui .
+#   docker run --rm -p 8000:8000 patchpilot-tui      # then open http://localhost:8000
+#
+# The same app as `python run.py --tui` on a laptop (agent/tui.py), served to the browser by
+# textual-serve: paste any GitHub URL, the agent clones it into the sandbox and runs the real
+# Trivy, pip and pytest; every write waits for Approve. Trivy's DB (~140 MB download) is
+# fetched when the container starts. Secrets (GITHUB_TOKEN, OPENAI_API_KEY) come only from
+# the Render dashboard, never from this image.
+
+FROM aquasec/trivy:0.58.1 AS trivy
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PORT=8000 \
+    LANGSMITH_TRACING=false \
+    PATCHPILOT_TRIVY_CACHE=/app/.cache/trivy
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt textual-serve==1.1.3
+
+COPY . .
+# sandbox/.venv: the interpreter the template repo's tests run in (as scripts/setup.py makes it)
+RUN python -m venv sandbox/.venv && sandbox/.venv/bin/pip install -q pytest==8.3.3 \
+    && useradd --create-home --uid 10001 patchpilot && chown -R patchpilot /app
+USER patchpilot
+
+EXPOSE 8000
+CMD ["sh", "-c", "trivy fs --cache-dir \"$PATCHPILOT_TRIVY_CACHE\" --download-db-only --quiet || echo 'Trivy DB download failed'; exec python -c \"import os; from textual_serve.server import Server; p = int(os.environ['PORT']); Server('python -m agent --tui', host='0.0.0.0', port=p, title='PatchPilot', public_url=os.environ.get('RENDER_EXTERNAL_URL') or f'http://localhost:{p}').serve()\""]

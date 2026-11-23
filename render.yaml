@@ -19,3 +19,16 @@ services:
         value: "300"
       # Paid models stay off on the public demo. To allow one, set it in the dashboard (and
       # OPENAI_API_KEY as a secret there, never in this file): PATCHPILOT_WEB_LLM_MODELS=gpt-4o-mini
+
+  # Any repository: the terminal UI (agent/tui.py) in the browser, with the real Trivy, pip and
+  # pytest (Dockerfile.tui). Optional secrets, set in the dashboard only (Environment tab), never
+  # in this file: GITHUB_TOKEN for real issues and PRs, OPENAI_API_KEY for GPT.
+  - type: web
+    name: patchpilot-repos
+    runtime: docker
+    dockerfilePath: ./Dockerfile.tui
+    dockerContext: .
+    plan: free
+    region: frankfurt
+    healthCheckPath: /
+    autoDeploy: true
