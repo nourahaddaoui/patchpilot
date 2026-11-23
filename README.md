@@ -268,6 +268,8 @@ It needs `PATCHPILOT_ADMIN_TOKEN` (fine-grained, demo repo only, with Administra
 
 A hosted demo of the real agent: pick a scenario, watch every step, and be the human who approves or denies each write in the browser.
 
+**Live: https://patchpilot-lzxk.onrender.com** (free plan: the first visit after a quiet spell takes about a minute to wake it).
+
 ```bash
 python -m web                 # local: http://localhost:8000
 docker build -t patchpilot .  # or in Docker
@@ -326,6 +328,7 @@ What the demo runs, and why it is safe on a public URL:
 | `threat_model.md`, `tests/test_threats.py` | Every place untrusted text enters, what an attacker wants, the five defense layers and the test for each; accepted risks | 15 |
 | `scripts/prove_stop_rule.py`, `logs/proof/`, `tests/test_stop_proof.py` | Stop-rule proof: one logged run of the real agent per stop reason, each checked by a test | 17 |
 | `postmortem.md` | The real problems we hit, root causes, fixes and lessons | 19 |
+| `report.pdf` (source `report.html`) | The report, 3 pages: problem and scope, design, safety, evaluation, cost and latency, the live demo, limitations and lessons | 19 |
 | `scripts/scan_secrets.py`, `tests/test_scan_secrets.py` | Credential scan of every tracked file before the freeze (masked output) | 20 |
 | `logs/` | JSONL trajectory logs (one per run) | 2+ |
 | `web/`, `Dockerfile`, `render.yaml` | The hosted demo: runs with the checkpoint in the browser, the HTTP API and page, the image, the Render Blueprint | Deploy |
