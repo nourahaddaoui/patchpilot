@@ -1,0 +1,21 @@
+# Render Blueprint for the PatchPilot web demo.
+# Render dashboard -> New -> Blueprint -> pick this repo. Every push to main redeploys.
+services:
+  - type: web
+    name: patchpilot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: frankfurt
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PATCHPILOT_WEB_MAX_RUNS          # runs at once; more are refused with "busy"
+        value: "3"
+      - key: PATCHPILOT_WEB_STARTS_PER_MINUTE # run starts per minute, all visitors together
+        value: "30"
+      - key: PATCHPILOT_WEB_ANSWER_TIMEOUT_S  # no answer at the checkpoint within this = deny
+        value: "300"
+      # Paid models stay off on the public demo. To allow one, set it in the dashboard (and
+      # OPENAI_API_KEY as a secret there, never in this file): PATCHPILOT_WEB_LLM_MODELS=gpt-4o-mini

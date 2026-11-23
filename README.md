@@ -264,6 +264,32 @@ It closes open issues and PRs that carry the PatchPilot footer, deletes `patchpi
 
 It needs `PATCHPILOT_ADMIN_TOKEN` (fine-grained, demo repo only, with Administration) in **`.env.admin`**, which is git-ignored and read only by this script. **Why a separate token:** a force-push to protected `main` needs Administration rights. If the agent's token had them, a confused or prompt-injected run could remove the protection the whole flow relies on. The agent never loads `.env.admin`, and its subprocesses get a scrubbed environment anyway.
 
+## Deploy: the web demo (Render)
+
+A hosted demo of the real agent: pick a scenario, watch every step, and be the human who approves or denies each write in the browser.
+
+```bash
+python -m web                 # local: http://localhost:8000
+docker build -t patchpilot .  # or in Docker
+docker run --rm -p 8000:8000 patchpilot
+```
+
+**On Render:** dashboard → **New** → **Blueprint** → pick this repo. `render.yaml` creates a free Docker web service with a health check on `/healthz`, and every push to `main` redeploys. The free plan sleeps when idle, so the first visit after a while takes about a minute to wake it.
+
+What the demo runs, and why it is safe on a public URL:
+
+- **Only the 40 eval scenarios** (`eval/scenarios.py`). The agent, its tools, the checkpoint, recovery and the stop rule are the real code; Trivy, pip, pytest and GitHub are simulated per scenario. Nobody can point it at a real repository, so no stranger's code ever runs on the server, and no Trivy database is needed.
+- **The same human checkpoint as the terminal** (`web/runs.py`): the page shows the exact diff and the scan before and after, and only an explicit Approve writes. One click answers one question; no answer within 5 minutes is a deny.
+- **No paid model by default.** The free `rules` model, plus the `compromised` model on injection scenarios (it obeys every injected instruction, to show which defense stops it). A paid model only appears if the owner sets `PATCHPILOT_WEB_LLM_MODELS` and `OPENAI_API_KEY` in the Render dashboard.
+- **Hardened page:** a strict Content-Security-Policy (no inline script), agent output inserted as text only, at most 3 runs at once and 30 starts a minute, no API docs exposed. The image runs as a non-root user and contains no `.env`, `.git` or local state (`.dockerignore`, `tests/test_deploy.py`).
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PATCHPILOT_WEB_MAX_RUNS` | `3` | Runs at once; more are refused as busy |
+| `PATCHPILOT_WEB_STARTS_PER_MINUTE` | `30` | Run starts per minute, all visitors together |
+| `PATCHPILOT_WEB_ANSWER_TIMEOUT_S` | `300` | Seconds to answer a checkpoint before it counts as deny |
+| `PATCHPILOT_WEB_LLM_MODELS` | empty | Comma-separated paid models to offer (needs `OPENAI_API_KEY`) |
+
 ## Layout
 
 | Path | What it is | Day |
@@ -302,6 +328,7 @@ It needs `PATCHPILOT_ADMIN_TOKEN` (fine-grained, demo repo only, with Administra
 | `postmortem.md` | The real problems we hit, root causes, fixes and lessons | 19 |
 | `scripts/scan_secrets.py`, `tests/test_scan_secrets.py` | Credential scan of every tracked file before the freeze (masked output) | 20 |
 | `logs/` | JSONL trajectory logs (one per run) | 2+ |
+| `web/`, `Dockerfile`, `render.yaml` | The hosted demo: runs with the checkpoint in the browser, the HTTP API and page, the image, the Render Blueprint | Deploy |
 
 ## Stop rule
 

@@ -32,3 +32,25 @@ def test_the_image_runs_the_web_demo_as_a_non_root_user():
 
 def test_tracing_is_off_in_the_image():
     assert any("LANGSMITH_TRACING=false" in line for line in lines("Dockerfile"))
+
+
+def test_render_blueprint_builds_the_dockerfile_with_a_health_check():
+    import yaml
+
+    spec = yaml.safe_load((ROOT / "render.yaml").read_text())
+    (svc,) = spec["services"]
+    assert svc["type"] == "web" and svc["runtime"] == "docker"
+    assert svc["dockerfilePath"] == "./Dockerfile" and (ROOT / "Dockerfile").is_file()
+    assert svc["healthCheckPath"] == "/healthz"
+    env = {e["key"]: e.get("value") for e in svc.get("envVars", [])}
+    assert not any(k in env for k in ("OPENAI_API_KEY", "GITHUB_TOKEN", "LANGSMITH_API_KEY"))  # secrets live in the dashboard
+    assert "PATCHPILOT_WEB_LLM_MODELS" not in env  # no paid model on the public demo by default
+
+
+def test_the_health_check_path_is_served():
+    from fastapi.testclient import TestClient
+
+    from web.app import create_app
+
+    with TestClient(create_app()) as client:
+        assert client.get("/healthz").status_code == 200
