@@ -317,6 +317,27 @@ Once `check()` returns a reason, the loop makes no further tool calls. One excep
 
 The loop checks the rule before every model call and again before every tool call (so a model call that crosses the cost cap never gets its tool run). A step is one model turn with at most one tool call; a turn where the model calls no tool still counts as a step. Every turn therefore adds a step, so a run makes at most 12 model calls and 12 tool calls no matter what the model does (`tests/test_loop.py`).
 
+### Proof: one logged run per stop reason
+
+```bash
+python scripts/prove_stop_rule.py
+```
+
+Runs the real agent (loop, tools, checkpoint with a scripted human, recovery, JSONL log) once per stop reason on a fresh sandbox, with stand-ins only for trivy and pip/pytest, and writes `logs/proof/<reason>.jsonl`:
+
+| Log | How the run is pushed there | Result |
+|---|---|---|
+| `done.jsonl` | rules model, fixable CVE | scan, read, edit, test, rescan: 5 steps |
+| `approval_denied.jsonl` | the human answers `n` to the edit | stops after the denied edit: 3 steps, nothing written |
+| `no_fixed_version.jsonl` | the CVE has no fixed version | one issue, then stop: 2 steps |
+| `handed_off.jsonl` | the bump breaks the tests | rolled back, one issue, stop: 5 steps |
+| `fix_attempts.jsonl` | a model that keeps bumping to versions that break the tests | stops after 3 failed fixes: 8 steps |
+| `cost_cap.jsonl` | every model call costs $0.20 | the 3rd call crosses $0.50 and its tool never runs: 2 tool calls |
+| `step_limit.jsonl` | a model that never finishes | exactly 12 steps |
+| `gave_up.jsonl` | a model that never calls a tool | nudged once, then stopped: 2 steps |
+
+`tests/test_stop_proof.py` reruns all eight and checks every log, the saved ones included: it ends with exactly one stop record naming its reason, nothing after it, at most 12 steps, no tool call after the cost cap, and no write without a human yes right before it.
+
 ## Team
 
 | Member | Owns | Days |
