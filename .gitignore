@@ -11,3 +11,4 @@ logs/issues/
 sandbox/sources/
 sandbox/.venvs/
 .env.admin
+eval/runs/

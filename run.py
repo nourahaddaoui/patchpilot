@@ -4,6 +4,7 @@
     python run.py --target https://github.com/o/r   # fix a real repo, cloned into the sandbox
     python run.py --model gpt-4o-mini               # let GPT choose the tools (paid, capped at $0.50)
     python run.py test                              # run the test suite
+    python run.py eval                              # run the 40-scenario trajectory eval (eval/)
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ def main(argv: list[str]) -> int:
         return 2
     if argv[:1] == ["test"]:
         cmd = [str(VENV_PY), "-m", "pytest", "-q", *argv[1:]]
+    elif argv[:1] == ["eval"]:
+        cmd = [str(VENV_PY), "-m", "eval", *argv[1:]]
     else:
         cmd = [str(VENV_PY), "-m", "agent", *argv]
     return subprocess.run(cmd, cwd=ROOT).returncode

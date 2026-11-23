@@ -23,6 +23,7 @@ import os
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
+from agent.injection import enabled as injection_defense_enabled, guard
 from agent.model import DEFAULT_MODEL, ModelReply, ToolCall, load_dotenv, openai_tools, price_for
 
 LOCAL_SERVER_KEY = "not-needed-for-a-local-server"
@@ -88,6 +89,7 @@ class LangChainModel:
         self.name = model or os.environ.get("PATCHPILOT_MODEL", DEFAULT_MODEL)
         self.price_in, self.price_out = price_for(self.name)  # before any client: unknown price = refused
         self.chat = chat if chat is not None else _chat_openai(self.name)
+        self.defense = injection_defense_enabled()  # agent/injection.py; the eval turns it off for "before"
         self._bound = None
         self._bound_for: list[dict] | None = None
 
@@ -98,5 +100,5 @@ class LangChainModel:
         return self._bound
 
     def complete(self, messages: list[dict], tools: list[dict]) -> ModelReply:
-        msg = self._bind(tools).invoke(to_langchain(messages))
+        msg = self._bind(tools).invoke(to_langchain(guard(messages, self.defense)))  # tool output = data
         return to_reply(msg, self.price_in, self.price_out)

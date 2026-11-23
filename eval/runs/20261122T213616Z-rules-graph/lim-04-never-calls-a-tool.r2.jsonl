@@ -1,0 +1,4 @@
+{"run_id": "lim-04-never-calls-a-tool.r2", "event": "start", "model": "scripted", "repo": "C:\\Users\\youss\\AppData\\Local\\Temp\\patchpilot-eval-gsm8nhax\\work", "limits": {"max_steps": 12, "max_cost_usd": 0.5, "max_failed_fixes": 3}}
+{"run_id": "lim-04-never-calls-a-tool.r2", "event": "model", "step": 1, "text": "I think it is fine.", "tool_calls": [], "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "total_cost_usd": 0.0}
+{"run_id": "lim-04-never-calls-a-tool.r2", "event": "model", "step": 2, "text": "I think it is fine.", "tool_calls": [], "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "total_cost_usd": 0.0}
+{"run_id": "lim-04-never-calls-a-tool.r2", "event": "stop", "reason": "gave_up", "steps": 2, "cost_usd": 0.0, "failed_fixes": 0, "scan_clean": false, "tests_green": false, "commit": null, "reverted_uncommitted_edit": false}
